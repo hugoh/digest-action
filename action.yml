@@ -1,8 +1,7 @@
 name: digest-action
-description: >
-  Build (and optionally email) an HTML digest of an account's GitHub
-  activity: still-open PRs/issues, releases, and recently closed PRs/issues,
-  fetched via GraphQL. See digest.py for the underlying script.
+description: >-
+  Build (and optionally email) an HTML digest of a GitHub account's repo
+  activity -- open/closed PRs, issues, and releases.
 inputs:
   only:
     description: Comma-separated repo names to limit to (default -- every non-archived repo)
