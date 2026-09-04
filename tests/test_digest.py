@@ -136,18 +136,21 @@ def _repo_data(
     pr_has_next=False,
     issue_has_next=False,
     release_has_next=False,
+    pr_cursor=None,
+    issue_cursor=None,
+    release_cursor=None,
 ):
     return {
         "pullRequests": {
-            "pageInfo": {"hasNextPage": pr_has_next},
+            "pageInfo": {"hasNextPage": pr_has_next, "endCursor": pr_cursor},
             "nodes": list(prs),
         },
         "issues": {
-            "pageInfo": {"hasNextPage": issue_has_next},
+            "pageInfo": {"hasNextPage": issue_has_next, "endCursor": issue_cursor},
             "nodes": list(issues),
         },
         "releases": {
-            "pageInfo": {"hasNextPage": release_has_next},
+            "pageInfo": {"hasNextPage": release_has_next, "endCursor": release_cursor},
             "nodes": list(releases),
         },
     }
@@ -159,6 +162,12 @@ def _mock_graphql(httpx2_mock: respx.Router, *repo_data: dict) -> respx.Route:
             200,
             json={"data": {f"r{i}": data for i, data in enumerate(repo_data)}},
         )
+    )
+
+
+def _connection_page_response(connection: str, data: dict) -> httpx.Response:
+    return httpx.Response(
+        200, json={"data": {"repository": {connection: data[connection]}}}
     )
 
 
@@ -430,12 +439,94 @@ async def test_fetch_activity_excludes_releases_published_before_since(
     assert [r["tag_name"] for r in releases] == ["v2.0.0"]
 
 
-async def test_fetch_activity_warns_on_stderr_when_has_next_page(
-    httpx2_mock: respx.Router, capsys
+async def test_fetch_activity_follows_next_page_while_still_in_window(
+    httpx2_mock: respx.Router,
 ):
-    _mock_graphql(httpx2_mock, _repo_data(prs=[_gql_pr()], pr_has_next=True))
-    await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
-    assert "repo-a" in capsys.readouterr().err
+    """Nodes are ordered UPDATED_AT DESC, so a next page is only worth
+    following while the last node fetched so far is still within
+    since_fetch -- here it is, so the PR from page 2 must show up too.
+    """
+    route = httpx2_mock.post(f"{API_BASE}/graphql")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "data": {
+                    "r0": _repo_data(
+                        prs=[_gql_pr(number=1, updated_at="2026-07-20T10:00:00Z")],
+                        pr_has_next=True,
+                        pr_cursor="cursor-1",
+                    )
+                }
+            },
+        ),
+        _connection_page_response(
+            "pullRequests",
+            _repo_data(prs=[_gql_pr(number=2, updated_at="2026-07-19T10:00:00Z")]),
+        ),
+    ]
+    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    assert {pr["number"] for pr in prs} == {1, 2}
+    assert route.call_count == 2
+
+
+async def test_fetch_activity_stops_paginating_once_page_falls_out_of_window(
+    httpx2_mock: respx.Router,
+):
+    """The last PR on page 1 already predates since_fetch, so every PR on a
+    further page would too (same DESC order) -- no follow-up request needed
+    even though hasNextPage is still true.
+    """
+    route = _mock_graphql(
+        httpx2_mock,
+        _repo_data(
+            prs=[_gql_pr(number=1, updated_at="2026-07-01T10:00:00Z")],
+            pr_has_next=True,
+            pr_cursor="cursor-1",
+        ),
+    )
+    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    assert [pr["number"] for pr in prs] == []
+    assert route.call_count == 1
+
+
+async def test_fetch_activity_paginates_releases_by_created_at(
+    httpx2_mock: respx.Router,
+):
+    """Releases are ordered by CREATED_AT (GitHub has no PUBLISHED_AT order
+    option), so pagination must key its early-stop check off createdAt too,
+    not the publishedAt field results are ultimately filtered on.
+    """
+    route = httpx2_mock.post(f"{API_BASE}/graphql")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "data": {
+                    "r0": _repo_data(
+                        releases=[
+                            _gql_release(
+                                tag_name="v2.0.0", created_at="2026-07-20T10:00:00Z"
+                            )
+                        ],
+                        release_has_next=True,
+                        release_cursor="cursor-1",
+                    )
+                }
+            },
+        ),
+        _connection_page_response(
+            "releases",
+            _repo_data(
+                releases=[
+                    _gql_release(tag_name="v1.0.0", created_at="2026-07-19T10:00:00Z")
+                ]
+            ),
+        ),
+    ]
+    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    assert {r["tag_name"] for r in releases} == {"v2.0.0", "v1.0.0"}
+    assert route.call_count == 2
 
 
 async def test_fetch_activity_batches_repos_across_multiple_queries(
