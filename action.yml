@@ -62,8 +62,9 @@ inputs:
     required: false
     default: ""
   owner:
-    description: GitHub account/org to report on
-    required: true
+    description: GitHub account/org to report on (default -- whoever runs the action)
+    required: false
+    default: ${{ github.repository_owner }}
   github-token:
     description: >
       Token gh (and so `gh auth token`) should use -- needs read access to

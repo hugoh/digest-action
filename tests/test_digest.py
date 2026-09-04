@@ -6,7 +6,7 @@ import respx
 from asyncgh import API_BASE
 from repokit import Repo
 
-from digest import build_parser, fetch_activity, render_html
+from digest import _main_async, build_parser, fetch_activity, render_html
 
 # open PRs cover the last 14 days, closed PRs the last 7 -- both windows
 # meet at UNTIL (2026-07-24).
@@ -22,6 +22,25 @@ REPO_B = Repo(name="repo-b", default_branch="main", is_private=False, is_fork=Fa
 @pytest.fixture(autouse=True)
 def fake_auth_token(monkeypatch):
     monkeypatch.setattr("asyncgh.client._auth_token", lambda: "fake-token")
+
+
+# ---------------------------------------------------------------------------
+# _main_async
+#
+# The owner to report on comes from GH_OWNER alone -- there's no hardcoded
+# fallback, so a missing env var must fail loudly rather than silently
+# reporting on the wrong account.
+# ---------------------------------------------------------------------------
+
+
+async def test_main_async_errors_without_gh_owner(monkeypatch, capsys):
+    monkeypatch.delenv("GH_OWNER", raising=False)
+    args = build_parser().parse_args([])
+
+    result = await _main_async(args)
+
+    assert result == 1
+    assert "GH_OWNER" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
