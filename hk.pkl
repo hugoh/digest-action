@@ -1,0 +1,44 @@
+amends "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Builtins.pkl"
+import "package://github.com/hugoh/hk-config/releases/download/v1.4.2/hk-config@1.4.2#/base.pkl" as Base
+
+min_hk_version = Base.min_hk_version
+
+local linters = new Mapping<String, Step> {
+    ...Base.base
+    ...Base.python
+    ["uv-sync"] = {
+        check = "uv sync"
+    }
+    ["pytest"] = {
+        check = "uv run pytest"
+        profiles = List("ci")
+        depends = List("uv-sync")
+    }
+    ["ty"] {
+        depends = List("uv-sync")
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["pre-push"] {
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["commit-msg"] {
+        steps = new Mapping<String, Step> {
+            ...Base.commit_msg
+        }
+    }
+}

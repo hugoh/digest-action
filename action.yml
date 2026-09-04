@@ -1,0 +1,121 @@
+name: digest-action
+description: >
+  Build (and optionally email) an HTML digest of an account's GitHub
+  activity: still-open PRs/issues, releases, and recently closed PRs/issues,
+  fetched via GraphQL. See digest.py for the underlying script.
+inputs:
+  only:
+    description: Comma-separated repo names to limit to (default -- every non-archived repo)
+    required: false
+    default: ""
+  skip:
+    description: Comma-separated repo names to exclude
+    required: false
+    default: ""
+  open-days:
+    description: How many days back to look for still-open PRs and issues
+    required: false
+    default: "365"
+  closed-days:
+    description: How many days back to look for closed PRs and issues
+    required: false
+    default: "7"
+  release-days:
+    description: How many days back to look for published releases
+    required: false
+    default: "7"
+  out:
+    description: >
+      Path (relative to the runner's workspace) to also write the rendered
+      HTML to. Required if send-email is false, since otherwise the digest
+      would be built and immediately discarded.
+    required: false
+    default: ""
+  send-email:
+    description: Whether to email the digest -- requires the smtp-* / digest-*-email inputs
+    required: false
+    default: "true"
+  smtp-host:
+    description: SMTP relay host. Required when send-email is true.
+    required: false
+    default: ""
+  smtp-port:
+    description: SMTP relay port. Required when send-email is true.
+    required: false
+    default: ""
+  smtp-username:
+    description: SMTP username. Required when send-email is true.
+    required: false
+    default: ""
+  smtp-password:
+    description: SMTP password -- pass as a secret. Required when send-email is true.
+    required: false
+    default: ""
+  digest-from-email:
+    description: Envelope From address. Required when send-email is true.
+    required: false
+    default: ""
+  digest-to-email:
+    description: Recipient address. Required when send-email is true.
+    required: false
+    default: ""
+  owner:
+    description: GitHub account/org to report on
+    required: true
+  github-token:
+    description: >
+      Token gh (and so `gh auth token`) should use -- needs read access to
+      every targeted repo, and to list repos for `owner` account-wide, which
+      GITHUB_TOKEN cannot do outside its own repo. Passed through as GH_TOKEN.
+    required: true
+  uv-version:
+    description: uv version to install
+    required: false
+    default: "0.12.7"
+outputs:
+  html:
+    description: Path to the rendered HTML file (set only when `out` is given)
+    value: ${{ steps.render.outputs.html }}
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        version: ${{ inputs.uv-version }}
+
+    - id: render
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_OWNER: ${{ inputs.owner }}
+        ONLY: ${{ inputs.only }}
+        SKIP: ${{ inputs.skip }}
+        OPEN_DAYS: ${{ inputs.open-days }}
+        CLOSED_DAYS: ${{ inputs.closed-days }}
+        RELEASE_DAYS: ${{ inputs.release-days }}
+        OUT: ${{ inputs.out }}
+        SEND_EMAIL: ${{ inputs.send-email }}
+        SMTP_HOST: ${{ inputs.smtp-host }}
+        SMTP_PORT: ${{ inputs.smtp-port }}
+        SMTP_USERNAME: ${{ inputs.smtp-username }}
+        SMTP_PASSWORD: ${{ inputs.smtp-password }}
+        DIGEST_FROM_EMAIL: ${{ inputs.digest-from-email }}
+        DIGEST_TO_EMAIL: ${{ inputs.digest-to-email }}
+      run: |
+        set -euo pipefail
+        args=(
+          --open-days "$OPEN_DAYS"
+          --closed-days "$CLOSED_DAYS"
+          --release-days "$RELEASE_DAYS"
+        )
+        [ -n "$ONLY" ] && IFS=',' read -ra only_repos <<<"$ONLY" && args+=("${only_repos[@]}")
+        [ -n "$SKIP" ] && args+=(--skip "$SKIP")
+        [ -n "$OUT" ] && args+=(--out "$OUT")
+        [ "$SEND_EMAIL" = "false" ] && args+=(--no-send)
+
+        uv run --project "$GITHUB_ACTION_PATH" \
+          "$GITHUB_ACTION_PATH/digest.py" "${args[@]}"
+
+        if [ -n "$OUT" ]; then
+          echo "html=$OUT" >> "$GITHUB_OUTPUT"
+        fi

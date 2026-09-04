@@ -1,0 +1,107 @@
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; }
+h1 { font-size: 1.2em; }
+h2 { font-size: 1.05em; margin-top: 1.5em; }
+table { border-collapse: collapse; width: 100%; }
+td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; font-size: 0.9em; }
+.empty { color: #666; font-style: italic; }
+.meta { color: #666; font-size: 0.85em; }
+.status-passing, .mergeable-clean { color: #1a7f37; font-weight: 600; }
+.status-failing, .mergeable-conflict { color: #cf222e; font-weight: 600; }
+.status-pending { color: #9a6700; font-weight: 600; }
+.status-no-checks { color: #666; }
+.release-stable { color: #1a7f37; font-weight: 600; }
+.release-prerelease { color: #9a6700; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>GitHub digest</h1>
+<p class="meta">
+Open PRs/issues: opened in the last {{ (until - since_open).days }} days (since {{ since_open.strftime("%Y-%m-%d") }})<br>
+Closed PRs/issues: closed in the last {{ (until - since_closed).days }} days (since {{ since_closed.strftime("%Y-%m-%d") }})<br>
+Releases: published in the last {{ (until - since_release).days }} days (since {{ since_release.strftime("%Y-%m-%d") }})
+</p>
+{% macro section(title, since, until, prs, show_status, show_ci) %}
+<h2>{{ title }} ({{ prs|length }}) ({{ since.strftime("%Y-%m-%d") }} to {{ until.strftime("%Y-%m-%d") }})</h2>
+{% if not prs %}
+<p class="empty">No {{ title.lower() }} PRs in this period.</p>
+{% else %}
+<table>
+<tr>
+  <th>Title</th><th>Repo</th><th>#</th><th>Author</th><th>Opened</th>
+  {% if show_status %}<th>Status</th>{% endif %}
+  {% if show_ci %}<th>CI</th><th>Conflicts</th>{% endif %}
+</tr>
+{% for pr in prs %}
+<tr>
+  <td><a href="{{ pr.url }}">{{ pr.title }}</a></td>
+  <td>{{ pr.repo }}</td>
+  <td>#{{ pr.number }}</td>
+  <td>{{ pr.author }}</td>
+  <td>{{ pr.created_at.strftime("%Y-%m-%d") }}</td>
+  {% if show_status %}
+  <td>{{ "merged" if pr.merged else "closed" }} {{ pr.closed_at.strftime("%Y-%m-%d") }}</td>
+  {% endif %}
+  {% if show_ci %}
+  <td class="status-{{ pr.ci_status | replace(' ', '-') }}">{{ pr.ci_status }}</td>
+  <td class="mergeable-{{ pr.mergeable }}">{{ pr.mergeable }}</td>
+  {% endif %}
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
+{% macro releases_section(since, until, releases) %}
+<h2>Releases ({{ releases|length }}) ({{ since.strftime("%Y-%m-%d") }} to {{ until.strftime("%Y-%m-%d") }})</h2>
+{% if not releases %}
+<p class="empty">No releases in this period.</p>
+{% else %}
+<table>
+<tr>
+  <th>Release</th><th>Published</th><th>Type</th>
+</tr>
+{% for release in releases %}
+<tr>
+  <td><a href="{{ release.url }}">{{ release.repo }} {{ release.tag_name }}</a></td>
+  <td>{{ release.published_at.strftime("%Y-%m-%d") }}</td>
+  <td class="{{ "release-prerelease" if release.prerelease else "release-stable" }}">{{ "prerelease" if release.prerelease else "release" }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
+{% macro issues_section(title, since, until, issues, show_closed) %}
+<h2>{{ title }} ({{ issues|length }}) ({{ since.strftime("%Y-%m-%d") }} to {{ until.strftime("%Y-%m-%d") }})</h2>
+{% if not issues %}
+<p class="empty">No {{ title.lower() }} in this period.</p>
+{% else %}
+<table>
+<tr>
+  <th>Title</th><th>Repo</th><th>#</th><th>Author</th><th>Opened</th>
+  {% if show_closed %}<th>Closed</th>{% endif %}
+</tr>
+{% for issue in issues %}
+<tr>
+  <td><a href="{{ issue.url }}">{{ issue.title }}</a></td>
+  <td>{{ issue.repo }}</td>
+  <td>#{{ issue.number }}</td>
+  <td>{{ issue.author }}</td>
+  <td>{{ issue.created_at.strftime("%Y-%m-%d") }}</td>
+  {% if show_closed %}
+  <td>{{ issue.closed_at.strftime("%Y-%m-%d") }}</td>
+  {% endif %}
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
+{{ section("Open", since_open, until, open_prs, false, true) }}
+{{ issues_section("Open issues", since_open, until, open_issues, false) }}
+{{ releases_section(since_release, until, releases) }}
+{{ section("Closed", since_closed, until, closed_prs, true, false) }}
+{{ issues_section("Closed issues", since_closed, until, closed_issues, true) }}
+</body>
+</html>
