@@ -2,6 +2,9 @@ name: digest-action
 description: >-
   Build (and optionally email) an HTML digest of a GitHub account's repo
   activity -- open/closed PRs, issues, and releases.
+branding:
+  icon: mail
+  color: blue
 inputs:
   only:
     description: Comma-separated repo names to limit to (default -- every non-archived repo)
