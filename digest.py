@@ -129,25 +129,42 @@ def _normalize_release(repo_name: str, node: dict) -> dict:
     }
 
 
-_REPO_QUERY_FIELDS = """
-      pullRequests(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, CLOSED, MERGED]) {
-        pageInfo { hasNextPage }
-        nodes {
-          number title url state createdAt closedAt updatedAt
+_PR_FIELDS = """number title url state createdAt closedAt updatedAt
           author { login }
           mergeable
-          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-        }
-      }
-      issues(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, CLOSED]) {
-        pageInfo { hasNextPage }
-        nodes { number title url state createdAt closedAt updatedAt author { login } }
-      }
-      releases(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
-        pageInfo { hasNextPage }
-        nodes { tagName name url publishedAt createdAt isPrerelease isDraft }
-      }
-"""
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"""
+_ISSUE_FIELDS = "number title url state createdAt closedAt updatedAt author { login }"
+_RELEASE_FIELDS = "tagName name url publishedAt createdAt isPrerelease isDraft"
+
+# Args shared between a connection's first page (in the batched multi-repo
+# query) and its continuation pages (fetched one repo/connection at a time,
+# below) -- `first: 100, after: $after` is added by whichever query builder
+# is using them.
+_CONNECTION_QUERY_ARGS = {
+    "pullRequests": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, CLOSED, MERGED]",
+    "issues": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, CLOSED]",
+    # GitHub has no PUBLISHED_AT order option for releases, so CREATED_AT is
+    # the only field pagination can treat as monotonic across pages.
+    "releases": "orderBy: {field: CREATED_AT, direction: DESC}",
+}
+_CONNECTION_FIELDS = {
+    "pullRequests": _PR_FIELDS,
+    "issues": _ISSUE_FIELDS,
+    "releases": _RELEASE_FIELDS,
+}
+_CONNECTION_CUTOFF_FIELD = {
+    "pullRequests": "updatedAt",
+    "issues": "updatedAt",
+    "releases": "createdAt",
+}
+
+_REPO_QUERY_FIELDS = "\n".join(
+    f"""      {name}(first: 100, {args}) {{
+        pageInfo {{ hasNextPage endCursor }}
+        nodes {{ {_CONNECTION_FIELDS[name]} }}
+      }}"""
+    for name, args in _CONNECTION_QUERY_ARGS.items()
+)
 
 
 @functools.lru_cache
@@ -170,17 +187,69 @@ async def _fetch_batch(owner: str, names: list[str]) -> dict:
     return await graphql(_build_digest_query(len(names)), variables)
 
 
-def _warn_if_truncated(repo_name: str, connection: str, has_next_page: bool) -> None:
-    if has_next_page:
-        print(
-            f"warning: {repo_name} has more than 100 {connection} in the fetch "
-            "window -- results are truncated",
-            file=sys.stderr,
-        )
+@functools.lru_cache
+def _build_connection_page_query(connection: str) -> str:
+    """A single-repo, single-connection query for continuing pagination past
+    a connection's first page -- the batched multi-repo query above can't
+    express "page 2 of r3's PRs, nothing else" without a cursor variable per
+    connection per repo, so a continuation just asks for that one connection.
+    """
+    args = _CONNECTION_QUERY_ARGS[connection]
+    fields = _CONNECTION_FIELDS[connection]
+    return (
+        "query DigestPage($owner: String!, $name: String!, $after: String!) {\n"
+        "  repository(owner: $owner, name: $name) {\n"
+        f"    {connection}(first: 100, after: $after, {args}) {{\n"
+        "      pageInfo { hasNextPage endCursor }\n"
+        f"      nodes {{ {fields} }}\n"
+        "    }\n"
+        "  }\n"
+        "}"
+    )
+
+
+async def _fetch_connection_page(
+    owner: str, repo_name: str, connection: str, after: str
+) -> dict:
+    data = await graphql(
+        _build_connection_page_query(connection),
+        {"owner": owner, "name": repo_name, "after": after},
+    )
+    return data["repository"][connection]
+
+
+async def _paginate_connection(
+    owner: str,
+    repo_name: str,
+    connection: str,
+    data: dict,
+    since_fetch: datetime,
+    sem: asyncio.Semaphore,
+) -> dict:
+    """Follows a connection's pageInfo past its first page while there's more
+    to fetch and the oldest node so far is still within since_fetch. Nodes
+    are ordered by _CONNECTION_CUTOFF_FIELD DESC, so once a page's last node
+    falls before since_fetch every later page is older still -- pagination
+    can stop even if hasNextPage remains true.
+    """
+    cutoff_field = _CONNECTION_CUTOFF_FIELD[connection]
+    nodes = data["nodes"]
+    page_info = data["pageInfo"]
+    while (
+        page_info["hasNextPage"]
+        and nodes
+        and _parse_dt(nodes[-1][cutoff_field]) >= since_fetch
+    ):
+        async with sem:
+            page = await _fetch_connection_page(
+                owner, repo_name, connection, page_info["endCursor"]
+            )
+        nodes = nodes + page["nodes"]
+        page_info = page["pageInfo"]
+    return {"pageInfo": page_info, "nodes": nodes}
 
 
 def _extract_prs(repo_name: str, connection: dict, since_fetch: datetime) -> list[dict]:
-    _warn_if_truncated(repo_name, "PRs", connection["pageInfo"]["hasNextPage"])
     return [
         _normalize_pr(repo_name, node)
         for node in connection["nodes"]
@@ -191,7 +260,6 @@ def _extract_prs(repo_name: str, connection: dict, since_fetch: datetime) -> lis
 def _extract_issues(
     repo_name: str, connection: dict, since_fetch: datetime
 ) -> list[dict]:
-    _warn_if_truncated(repo_name, "issues", connection["pageInfo"]["hasNextPage"])
     issues = []
     for node in connection["nodes"]:
         if _parse_dt(node["updatedAt"]) < since_fetch:
@@ -205,7 +273,6 @@ def _extract_issues(
 def _extract_releases(
     repo_name: str, connection: dict, since_fetch: datetime
 ) -> list[dict]:
-    _warn_if_truncated(repo_name, "releases", connection["pageInfo"]["hasNextPage"])
     releases = []
     for node in connection["nodes"]:
         if node["isDraft"]:
@@ -236,21 +303,65 @@ async def fetch_activity(
         progress.advance(task)
         return result
 
+    def _needs_pagination(repo_data: dict) -> bool:
+        return any(
+            repo_data[name]["pageInfo"]["hasNextPage"]
+            for name in _CONNECTION_QUERY_ARGS
+        )
+
+    async def paginate_repo(
+        repo: Repo, repo_data: dict, progress: Progress, task
+    ) -> dict:
+        names = list(_CONNECTION_QUERY_ARGS)
+        needs_pagination = _needs_pagination(repo_data)
+        if needs_pagination:
+            progress.update(task, description=f"Paginating {repo.name}...")
+        pages = await asyncio.gather(
+            *(
+                _paginate_connection(
+                    owner, repo.name, name, repo_data[name], since_fetch, sem
+                )
+                for name in names
+            )
+        )
+        if needs_pagination:
+            progress.advance(task)
+        return dict(zip(names, pages, strict=True))
+
     with Progress(disable=not sys.stdout.isatty()) as progress:
-        task = progress.add_task("Fetching activity...", total=len(batches))
+        fetch_task = progress.add_task("Fetching activity...", total=len(batches))
         results = await asyncio.gather(
-            *(run_batch(batch, progress, task) for batch in batches)
+            *(run_batch(batch, progress, fetch_task) for batch in batches)
+        )
+
+        repos_and_data = [
+            (repo, batch_data[f"r{i}"])
+            for batch, batch_data in zip(batches, results, strict=True)
+            for i, repo in enumerate(batch)
+        ]
+        # Most repos have nothing to paginate -- sizing the bar to only the
+        # repos that actually need extra pages keeps it from jumping straight
+        # to 100% while doing real work for the few that do.
+        paginate_total = sum(
+            1 for _, repo_data in repos_and_data if _needs_pagination(repo_data)
+        )
+        paginate_task = progress.add_task(
+            "Paginating repos with >100 items...", total=paginate_total
+        )
+        paginated = await asyncio.gather(
+            *(
+                paginate_repo(repo, repo_data, progress, paginate_task)
+                for repo, repo_data in repos_and_data
+            )
         )
 
     prs, issues, releases = [], [], []
-    for batch, batch_data in zip(batches, results, strict=True):
-        for i, repo in enumerate(batch):
-            repo_data = batch_data[f"r{i}"]
-            prs.extend(_extract_prs(repo.name, repo_data["pullRequests"], since_fetch))
-            issues.extend(_extract_issues(repo.name, repo_data["issues"], since_fetch))
-            releases.extend(
-                _extract_releases(repo.name, repo_data["releases"], since_fetch)
-            )
+    for (repo, _), connections in zip(repos_and_data, paginated, strict=True):
+        prs.extend(_extract_prs(repo.name, connections["pullRequests"], since_fetch))
+        issues.extend(_extract_issues(repo.name, connections["issues"], since_fetch))
+        releases.extend(
+            _extract_releases(repo.name, connections["releases"], since_fetch)
+        )
     return prs, issues, releases
 
 
