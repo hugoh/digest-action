@@ -9,7 +9,7 @@ Usage: digest.py [repo ...] [--skip name1,name2] [--open-days 365]
 
 Trailing repo names scope the digest to those repos (default: every
 non-archived repo); --skip excludes instead, same convention as
-repo_admin.py. GH_OWNER overrides the default owner (hugoh).
+repo_admin.py. Requires GH_OWNER (the account/org to report on).
 
 Reads SMTP settings and the recipient from the environment: SMTP_HOST,
 SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, DIGEST_FROM_EMAIL,
@@ -21,13 +21,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import functools
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from asyncgh import graphql
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from repokit import DEFAULT_JOBS, DEFAULT_OWNER, Repo, as_set, list_repos, run_cli
+from repokit import DEFAULT_JOBS, Repo, as_set, list_repos, run_cli
 from repokit.email import send_email_from_env
 from rich.progress import Progress
 
@@ -373,6 +374,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def _main_async(args: argparse.Namespace) -> int:
+    owner = os.environ.get("GH_OWNER")
+    if not owner:
+        print("error: GH_OWNER must be set", file=sys.stderr)
+        return 1
+
     until = datetime.now(UTC)
     since_open = until - timedelta(days=args.open_days)
     since_closed = until - timedelta(days=args.closed_days)
@@ -380,9 +386,9 @@ async def _main_async(args: argparse.Namespace) -> int:
     since_fetch = min(since_open, since_closed, since_release)
 
     repos = await list_repos(
-        DEFAULT_OWNER, only=set(args.repos) or None, skip=as_set(args.skip)
+        owner, only=set(args.repos) or None, skip=as_set(args.skip)
     )
-    prs, issues, releases = await fetch_activity(DEFAULT_OWNER, repos, since_fetch)
+    prs, issues, releases = await fetch_activity(owner, repos, since_fetch)
     rendered = render_html(
         prs, releases, issues, since_open, since_closed, since_release, until
     )
