@@ -6,6 +6,11 @@
       "matchManagers": ["github-actions"],
       "matchFileNames": ["action.yml"],
       "semanticCommitType": "fix"
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchFileNames": ["pyproject.toml"],
+      "semanticCommitType": "fix"
     }
   ]
 }
