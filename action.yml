@@ -72,9 +72,11 @@ inputs:
       GITHUB_TOKEN cannot do outside its own repo. Passed through as GH_TOKEN.
     required: true
   uv-version:
-    description: uv version to install
+    description: >
+      uv version to install (e.g. 0.5.0, latest, latest-known). Defaults to
+      the version in pyproject.toml, or latest.
     required: false
-    default: "0.12.7"
+    default: ""
 outputs:
   html:
     description: Path to the rendered HTML file (set only when `out` is given)
