@@ -1,8 +1,9 @@
 # digest-action
 
 Builds — and optionally emails — an HTML digest of a GitHub account's repo
-activity: still-open PRs and issues, releases, and recently closed PRs and
-issues, fetched via GraphQL in batches of 10 repos per query. Uses
+activity: still-open PRs and issues, releases, recently closed PRs and
+issues, and a stars section (per-repo totals plus stars gained in the last
+N days), fetched via GraphQL in batches of 10 repos per query. Uses
 [`repokit`](https://pypi.org/project/hugoh-repokit/) for repo listing/CLI
 plumbing and [`asyncgh`](https://pypi.org/project/asyncgh/) for the GitHub
 transport — both PyPI packages maintained in
@@ -21,6 +22,8 @@ Self-contained: installs its own pinned `uv` ([`astral-sh/setup-uv`](https://git
 | `open-days` | no | `365` | How far back to look for still-open PRs/issues |
 | `closed-days` | no | `7` | How far back to look for closed PRs/issues |
 | `release-days` | no | `7` | How far back to look for published releases |
+| `star-days` | no | `7,30` | Comma-separated windows (days) for counting recently-gained stars — one column per value |
+| `star-top` | no | `10` | Always show this many most-starred repos, even with no recent gain |
 | `out` | no | *(none)* | Also write the rendered HTML to this path (relative to the runner's workspace) — sets the `html` output. Required if `send-email` is `false`, since otherwise the digest is built and immediately discarded. |
 | `send-email` | no | `true` | Whether to email the digest — requires the `smtp-*`/`digest-*-email` inputs below |
 | `smtp-host` / `smtp-port` / `smtp-username` / `smtp-password` | when `send-email` | — | SMTP relay settings |

@@ -26,6 +26,18 @@ inputs:
     description: How many days back to look for published releases
     required: false
     default: "7"
+  star-days:
+    description: >
+      Comma-separated windows (in days) for counting recently-gained stars
+      -- one column per value in the Stars section.
+    required: false
+    default: "7,30"
+  star-top:
+    description: >
+      Always show this many most-starred repos in the Stars section, even
+      with no recent gain.
+    required: false
+    default: "10"
   out:
     description: >
       Path (relative to the runner's workspace) to also write the rendered
@@ -98,6 +110,8 @@ runs:
         OPEN_DAYS: ${{ inputs.open-days }}
         CLOSED_DAYS: ${{ inputs.closed-days }}
         RELEASE_DAYS: ${{ inputs.release-days }}
+        STAR_DAYS: ${{ inputs.star-days }}
+        STAR_TOP: ${{ inputs.star-top }}
         OUT: ${{ inputs.out }}
         SEND_EMAIL: ${{ inputs.send-email }}
         SMTP_HOST: ${{ inputs.smtp-host }}
@@ -112,6 +126,8 @@ runs:
           --open-days "$OPEN_DAYS"
           --closed-days "$CLOSED_DAYS"
           --release-days "$RELEASE_DAYS"
+          --star-days "$STAR_DAYS"
+          --star-top "$STAR_TOP"
         )
         [ -n "$ONLY" ] && IFS=',' read -ra only_repos <<<"$ONLY" && args+=("${only_repos[@]}")
         [ -n "$SKIP" ] && args+=(--skip "$SKIP")

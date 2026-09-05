@@ -15,6 +15,8 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; font
 .status-no-checks { color: #666; }
 .release-stable { color: #1a7f37; font-weight: 600; }
 .release-prerelease { color: #9a6700; font-weight: 600; }
+.star-gain { color: #1a7f37; font-weight: 600; }
+.star-flat { color: #666; }
 </style>
 </head>
 <body>
@@ -23,6 +25,9 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; font
 Open PRs/issues: opened in the last {{ (until - since_open).days }} days (since {{ since_open.strftime("%Y-%m-%d") }})<br>
 Closed PRs/issues: closed in the last {{ (until - since_closed).days }} days (since {{ since_closed.strftime("%Y-%m-%d") }})<br>
 Releases: published in the last {{ (until - since_release).days }} days (since {{ since_release.strftime("%Y-%m-%d") }})
+{% if star_days %}
+<br>Stars: totals now, plus stars gained in the last {{ star_days|join(" / ") }} days
+{% endif %}
 </p>
 {% macro section(title, since, until, prs, show_status, show_ci) %}
 <h2>{{ title }} ({{ prs|length }}) ({{ since.strftime("%Y-%m-%d") }} to {{ until.strftime("%Y-%m-%d") }})</h2>
@@ -98,9 +103,32 @@ Releases: published in the last {{ (until - since_release).days }} days (since {
 </table>
 {% endif %}
 {% endmacro %}
+{% macro stars_section(rows, star_days, owner) %}
+<h2>Stars ({{ rows|length }})</h2>
+{% if not rows %}
+<p class="empty">No repos with stars to report.</p>
+{% else %}
+<table>
+<tr>
+  <th>Repo</th><th>Total</th>
+  {% for d in star_days %}<th>+ last {{ d }}d</th>{% endfor %}
+</tr>
+{% for row in rows %}
+<tr>
+  <td><a href="https://github.com/{{ owner }}/{{ row.repo }}/stargazers">{{ row.repo }}</a></td>
+  <td>{{ row.total }}</td>
+  {% for gain in row.gains %}
+  <td class="{{ "star-gain" if gain else "star-flat" }}">{{ "+%d"|format(gain) if gain else "0" }}</td>
+  {% endfor %}
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
 {{ section("Open", since_open, until, open_prs, false, true) }}
 {{ issues_section("Open issues", since_open, until, open_issues, false) }}
 {{ releases_section(since_release, until, releases) }}
+{{ stars_section(star_rows, star_days, owner) }}
 {{ section("Closed", since_closed, until, closed_prs, true, false) }}
 {{ issues_section("Closed issues", since_closed, until, closed_issues, true) }}
 </body>

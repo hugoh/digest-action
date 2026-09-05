@@ -1,11 +1,13 @@
 """Builds an HTML digest of activity on an account's repos -- still-open PRs
 and issues opened in the last N days, releases published in the last R days,
-and PRs and issues closed in the last M days -- in separate sections, and
-emails it via an SMTP relay. Renovate's "Dependency Dashboard" issues are
-filtered out as noise.
+PRs and issues closed in the last M days, and a stars section (per-repo
+totals plus stars gained in each --star-days window) -- in separate
+sections, and emails it via an SMTP relay. Renovate's "Dependency Dashboard"
+issues are filtered out as noise.
 
 Usage: digest.py [repo ...] [--skip name1,name2] [--open-days 365]
-    [--release-days 7] [--closed-days 7] [--out FILE] [--no-send]
+    [--release-days 7] [--closed-days 7] [--star-days 7,30] [--star-top 10]
+    [--out FILE] [--no-send]
 
 Trailing repo names scope the digest to those repos (default: every
 non-archived repo); --skip excludes instead, same convention as
@@ -23,6 +25,7 @@ import asyncio
 import functools
 import os
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -118,6 +121,23 @@ def _normalize_issue(repo_name: str, node: dict) -> dict:
     }
 
 
+def _extract_stars(
+    repo_name: str, stargazer_count: int, connection: dict, since_star: datetime
+) -> dict:
+    """GitHub has no record of *un*stars, so "recent" star activity can only
+    ever be new stars -- the `starredAt` edge timestamps within since_star.
+    """
+    starred_at = sorted(
+        (
+            _parse_dt(edge["starredAt"])
+            for edge in connection["edges"]
+            if _parse_dt(edge["starredAt"]) >= since_star
+        ),
+        reverse=True,
+    )
+    return {"repo": repo_name, "total": stargazer_count, "starred_at": starred_at}
+
+
 def _normalize_release(repo_name: str, node: dict) -> dict:
     return {
         "repo": repo_name,
@@ -135,6 +155,7 @@ _PR_FIELDS = """number title url state createdAt closedAt updatedAt
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"""
 _ISSUE_FIELDS = "number title url state createdAt closedAt updatedAt author { login }"
 _RELEASE_FIELDS = "tagName name url publishedAt createdAt isPrerelease isDraft"
+_STARGAZER_FIELDS = "starredAt"
 
 # Args shared between a connection's first page (in the batched multi-repo
 # query) and its continuation pages (fetched one repo/connection at a time,
@@ -146,22 +167,32 @@ _CONNECTION_QUERY_ARGS = {
     # GitHub has no PUBLISHED_AT order option for releases, so CREATED_AT is
     # the only field pagination can treat as monotonic across pages.
     "releases": "orderBy: {field: CREATED_AT, direction: DESC}",
+    "stargazers": "orderBy: {field: STARRED_AT, direction: DESC}",
 }
 _CONNECTION_FIELDS = {
     "pullRequests": _PR_FIELDS,
     "issues": _ISSUE_FIELDS,
     "releases": _RELEASE_FIELDS,
+    "stargazers": _STARGAZER_FIELDS,
 }
 _CONNECTION_CUTOFF_FIELD = {
     "pullRequests": "updatedAt",
     "issues": "updatedAt",
     "releases": "createdAt",
+    "stargazers": "starredAt",
+}
+# stargazers exposes `starredAt` on the edge, not the node.
+_CONNECTION_ITEMS_KEY = {
+    "pullRequests": "nodes",
+    "issues": "nodes",
+    "releases": "nodes",
+    "stargazers": "edges",
 }
 
-_REPO_QUERY_FIELDS = "\n".join(
+_REPO_QUERY_FIELDS = "      stargazerCount\n" + "\n".join(
     f"""      {name}(first: 100, {args}) {{
         pageInfo {{ hasNextPage endCursor }}
-        nodes {{ {_CONNECTION_FIELDS[name]} }}
+        {_CONNECTION_ITEMS_KEY[name]} {{ {_CONNECTION_FIELDS[name]} }}
       }}"""
     for name, args in _CONNECTION_QUERY_ARGS.items()
 )
@@ -196,12 +227,13 @@ def _build_connection_page_query(connection: str) -> str:
     """
     args = _CONNECTION_QUERY_ARGS[connection]
     fields = _CONNECTION_FIELDS[connection]
+    items_key = _CONNECTION_ITEMS_KEY[connection]
     return (
         "query DigestPage($owner: String!, $name: String!, $after: String!) {\n"
         "  repository(owner: $owner, name: $name) {\n"
         f"    {connection}(first: 100, after: $after, {args}) {{\n"
         "      pageInfo { hasNextPage endCursor }\n"
-        f"      nodes {{ {fields} }}\n"
+        f"      {items_key} {{ {fields} }}\n"
         "    }\n"
         "  }\n"
         "}"
@@ -233,20 +265,21 @@ async def _paginate_connection(
     can stop even if hasNextPage remains true.
     """
     cutoff_field = _CONNECTION_CUTOFF_FIELD[connection]
-    nodes = data["nodes"]
+    items_key = _CONNECTION_ITEMS_KEY[connection]
+    items = data[items_key]
     page_info = data["pageInfo"]
     while (
         page_info["hasNextPage"]
-        and nodes
-        and _parse_dt(nodes[-1][cutoff_field]) >= since_fetch
+        and items
+        and _parse_dt(items[-1][cutoff_field]) >= since_fetch
     ):
         async with sem:
             page = await _fetch_connection_page(
                 owner, repo_name, connection, page_info["endCursor"]
             )
-        nodes = nodes + page["nodes"]
+        items = items + page[items_key]
         page_info = page["pageInfo"]
-    return {"pageInfo": page_info, "nodes": nodes}
+    return {"pageInfo": page_info, items_key: items}
 
 
 def _extract_prs(repo_name: str, connection: dict, since_fetch: datetime) -> list[dict]:
@@ -288,13 +321,19 @@ async def fetch_activity(
     repos: list[Repo],
     since_fetch: datetime,
     jobs: int = DEFAULT_JOBS,
-) -> tuple[list[dict], list[dict], list[dict]]:
-    """Fetches PRs, issues, and releases for every repo via GraphQL, batching
+    star_since: datetime | None = None,
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """Fetches PRs, issues, releases, and stargazers for every repo via GraphQL, batching
     up to _BATCH_SIZE repos per query (bounded by `jobs` concurrent batches)
     -- CI status and mergeable state come back inline on each PR node, so
     unlike the old REST fetch there's no separate per-open-PR round-trip.
     """
     sem = asyncio.Semaphore(jobs)
+    # Stars have a much shorter window than open PRs/issues; paginating them
+    # against since_fetch would page a popular repo's whole star history.
+    star_since = star_since or since_fetch
+    connection_since = dict.fromkeys(_CONNECTION_QUERY_ARGS, since_fetch)
+    connection_since["stargazers"] = star_since
     batches = [repos[i : i + _BATCH_SIZE] for i in range(0, len(repos), _BATCH_SIZE)]
 
     async def run_batch(batch: list[Repo], progress: Progress, task) -> dict:
@@ -319,7 +358,7 @@ async def fetch_activity(
         pages = await asyncio.gather(
             *(
                 _paginate_connection(
-                    owner, repo.name, name, repo_data[name], since_fetch, sem
+                    owner, repo.name, name, repo_data[name], connection_since[name], sem
                 )
                 for name in names
             )
@@ -355,14 +394,22 @@ async def fetch_activity(
             )
         )
 
-    prs, issues, releases = [], [], []
-    for (repo, _), connections in zip(repos_and_data, paginated, strict=True):
+    prs, issues, releases, stars = [], [], [], []
+    for (repo, repo_data), connections in zip(repos_and_data, paginated, strict=True):
         prs.extend(_extract_prs(repo.name, connections["pullRequests"], since_fetch))
         issues.extend(_extract_issues(repo.name, connections["issues"], since_fetch))
         releases.extend(
             _extract_releases(repo.name, connections["releases"], since_fetch)
         )
-    return prs, issues, releases
+        stars.append(
+            _extract_stars(
+                repo.name,
+                repo_data["stargazerCount"],
+                connections["stargazers"],
+                star_since,
+            )
+        )
+    return prs, issues, releases, stars
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +430,51 @@ def _format_date(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+@dataclass
+class _StarRow:
+    repo: str
+    total: int
+    gains: list[int]
+
+    @property
+    def widest_gain(self) -> int:
+        return self.gains[-1] if self.gains else 0
+
+
+def _star_rows(
+    stars: list[dict], star_cutoffs: list[datetime], star_top: int
+) -> list[_StarRow]:
+    """One row per repo worth showing: those that gained a star inside the
+    widest window, plus the star_top most-starred repos. A repo with no
+    stars and no recent gain is dropped entirely. Each row's `gains` lines
+    up with star_cutoffs (narrowest window first).
+    """
+    rows = [
+        _StarRow(
+            repo=s["repo"],
+            total=s["total"],
+            gains=[
+                sum(1 for t in s["starred_at"] if t >= cutoff)
+                for cutoff in star_cutoffs
+            ],
+        )
+        for s in stars
+    ]
+
+    keep = {row.repo for row in rows if row.widest_gain > 0}
+    keep |= {
+        row.repo
+        for row in sorted(
+            (r for r in rows if r.total > 0),
+            key=lambda r: r.total,
+            reverse=True,
+        )[:star_top]
+    }
+    shown = [row for row in rows if row.repo in keep]
+    shown.sort(key=lambda r: (r.widest_gain, r.total), reverse=True)
+    return shown
+
+
 def render_html(
     prs: list[dict],
     releases: list[dict],
@@ -391,7 +483,15 @@ def render_html(
     since_closed: datetime,
     since_release: datetime,
     until: datetime,
+    *,
+    stars: list[dict] | None = None,
+    star_days: list[int] | None = None,
+    star_top: int = 10,
+    owner: str = "",
 ) -> str:
+    star_days = sorted(star_days or [])
+    star_cutoffs = [until - timedelta(days=d) for d in star_days]
+    star_rows = _star_rows(stars or [], star_cutoffs, star_top)
     open_prs = sorted(
         (pr for pr in prs if pr["state"] == "open" and pr["created_at"] >= since_open),
         key=lambda pr: pr["created_at"],
@@ -439,6 +539,9 @@ def render_html(
         closed_prs=closed_prs,
         open_issues=open_issues,
         closed_issues=closed_issues,
+        star_rows=star_rows,
+        star_days=star_days,
+        owner=owner,
         since_open=since_open,
         since_closed=since_closed,
         since_release=since_release,
@@ -449,6 +552,10 @@ def render_html(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def _parse_day_list(value: str) -> list[int]:
+    return sorted({int(part) for part in value.split(",") if part.strip()})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -477,6 +584,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=7,
         help="how many days back to look for published releases (default 7)",
     )
+    parser.add_argument(
+        "--star-days",
+        type=_parse_day_list,
+        default=[7, 30],
+        help="comma-separated windows for counting recently-gained stars (default 7,30)",
+    )
+    parser.add_argument(
+        "--star-top",
+        type=int,
+        default=10,
+        help="always show this many most-starred repos, even with no recent gain (default 10)",
+    )
     parser.add_argument("--out", help="write the rendered HTML to this file")
     parser.add_argument(
         "--no-send", action="store_true", help="skip sending the email (for dry runs)"
@@ -495,13 +614,28 @@ async def _main_async(args: argparse.Namespace) -> int:
     since_closed = until - timedelta(days=args.closed_days)
     since_release = until - timedelta(days=args.release_days)
     since_fetch = min(since_open, since_closed, since_release)
+    star_since = min(
+        (until - timedelta(days=d) for d in args.star_days), default=since_fetch
+    )
 
     repos = await list_repos(
         owner, only=set(args.repos) or None, skip=as_set(args.skip)
     )
-    prs, issues, releases = await fetch_activity(owner, repos, since_fetch)
+    prs, issues, releases, stars = await fetch_activity(
+        owner, repos, since_fetch, star_since=star_since
+    )
     rendered = render_html(
-        prs, releases, issues, since_open, since_closed, since_release, until
+        prs,
+        releases,
+        issues,
+        since_open,
+        since_closed,
+        since_release,
+        until,
+        stars=stars,
+        star_days=args.star_days,
+        star_top=args.star_top,
+        owner=owner,
     )
 
     if args.out:
