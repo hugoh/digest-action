@@ -133,14 +133,19 @@ def _repo_data(
     prs=(),
     issues=(),
     releases=(),
+    stargazers=(),
+    stargazer_count=0,
     pr_has_next=False,
     issue_has_next=False,
     release_has_next=False,
+    star_has_next=False,
     pr_cursor=None,
     issue_cursor=None,
     release_cursor=None,
+    star_cursor=None,
 ):
     return {
+        "stargazerCount": stargazer_count,
         "pullRequests": {
             "pageInfo": {"hasNextPage": pr_has_next, "endCursor": pr_cursor},
             "nodes": list(prs),
@@ -152,6 +157,10 @@ def _repo_data(
         "releases": {
             "pageInfo": {"hasNextPage": release_has_next, "endCursor": release_cursor},
             "nodes": list(releases),
+        },
+        "stargazers": {
+            "pageInfo": {"hasNextPage": star_has_next, "endCursor": star_cursor},
+            "edges": [{"starredAt": t} for t in stargazers],
         },
     }
 
@@ -175,7 +184,9 @@ async def test_fetch_activity_normalizes_pr_fields(httpx2_mock: respx.Router):
     _mock_graphql(
         httpx2_mock, _repo_data(prs=[_gql_pr(number=5, title="Fix bug", login="hugoh")])
     )
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs == [
         {
             "repo": "repo-a",
@@ -205,7 +216,9 @@ async def test_fetch_activity_excludes_prs_updated_before_since(
             ]
         ),
     )
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert [pr["number"] for pr in prs] == [2]
 
 
@@ -226,7 +239,9 @@ async def test_fetch_activity_includes_pr_opened_before_since_but_updated_after(
             ]
         ),
     )
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert [pr["number"] for pr in prs] == [1]
 
 
@@ -237,7 +252,9 @@ async def test_fetch_activity_maps_merged_state_to_closed_and_merged_true(
         httpx2_mock,
         _repo_data(prs=[_gql_pr(state="MERGED", closed_at="2026-07-21T00:00:00Z")]),
     )
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs[0]["state"] == "closed"
     assert prs[0]["merged"] is True
 
@@ -249,14 +266,18 @@ async def test_fetch_activity_maps_closed_state_to_closed_and_merged_false(
         httpx2_mock,
         _repo_data(prs=[_gql_pr(state="CLOSED", closed_at="2026-07-21T00:00:00Z")]),
     )
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs[0]["state"] == "closed"
     assert prs[0]["merged"] is False
 
 
 async def test_fetch_activity_maps_open_state(httpx2_mock: respx.Router):
     _mock_graphql(httpx2_mock, _repo_data(prs=[_gql_pr(state="OPEN")]))
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs[0]["state"] == "open"
     assert prs[0]["merged"] is False
 
@@ -267,7 +288,7 @@ async def test_fetch_activity_combines_multiple_repos(httpx2_mock: respx.Router)
         _repo_data(prs=[_gql_pr(number=1)]),
         _repo_data(prs=[_gql_pr(number=2)]),
     )
-    prs, _issues, _releases = await fetch_activity(
+    prs, _issues, _releases, _stars = await fetch_activity(
         "hugoh", [REPO_A, REPO_B], SINCE_OPEN
     )
     assert sorted((pr["repo"], pr["number"]) for pr in prs) == [
@@ -291,7 +312,9 @@ async def test_fetch_activity_ci_status_mapping(
     httpx2_mock: respx.Router, rollup_state, expected_status
 ):
     _mock_graphql(httpx2_mock, _repo_data(prs=[_gql_pr(rollup_state=rollup_state)]))
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs[0]["ci_status"] == expected_status
 
 
@@ -299,7 +322,9 @@ async def test_fetch_activity_mergeable_conflict_when_conflicting(
     httpx2_mock: respx.Router,
 ):
     _mock_graphql(httpx2_mock, _repo_data(prs=[_gql_pr(mergeable="CONFLICTING")]))
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs[0]["mergeable"] == "conflict"
 
 
@@ -307,7 +332,9 @@ async def test_fetch_activity_mergeable_clean_when_unknown(httpx2_mock: respx.Ro
     # UNKNOWN is GraphQL's mergeable state right after a push, before GitHub
     # finishes computing it -- treated the same as clean, not flagged.
     _mock_graphql(httpx2_mock, _repo_data(prs=[_gql_pr(mergeable="UNKNOWN")]))
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert prs[0]["mergeable"] == "clean"
 
 
@@ -316,7 +343,9 @@ async def test_fetch_activity_normalizes_issue_fields(httpx2_mock: respx.Router)
         httpx2_mock,
         _repo_data(issues=[_gql_issue(number=5, title="Broken build", login="hugoh")]),
     )
-    _prs, issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    _prs, issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert issues == [
         {
             "repo": "repo-a",
@@ -345,7 +374,9 @@ async def test_fetch_activity_excludes_renovate_dependency_dashboard(
             ]
         ),
     )
-    _prs, issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    _prs, issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert [issue["number"] for issue in issues] == [2]
 
 
@@ -360,7 +391,9 @@ async def test_fetch_activity_keeps_dependency_dashboard_title_from_a_human(
             issues=[_gql_issue(number=1, title="Dependency Dashboard", login="octocat")]
         ),
     )
-    _prs, issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    _prs, issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert [issue["number"] for issue in issues] == [1]
 
 
@@ -376,7 +409,9 @@ async def test_fetch_activity_excludes_issues_updated_before_since(
             ]
         ),
     )
-    _prs, issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    _prs, issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert [issue["number"] for issue in issues] == [2]
 
 
@@ -385,7 +420,9 @@ async def test_fetch_activity_normalizes_release_fields(httpx2_mock: respx.Route
         httpx2_mock,
         _repo_data(releases=[_gql_release(tag_name="v2.0.0", name="Version 2.0.0")]),
     )
-    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    _prs, _issues, releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_RELEASE
+    )
     assert releases == [
         {
             "repo": "repo-a",
@@ -404,7 +441,9 @@ async def test_fetch_activity_falls_back_to_tag_name_when_name_blank(
     _mock_graphql(
         httpx2_mock, _repo_data(releases=[_gql_release(tag_name="v2.0.0", name="")])
     )
-    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    _prs, _issues, releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_RELEASE
+    )
     assert releases[0]["name"] == "v2.0.0"
 
 
@@ -413,13 +452,17 @@ async def test_fetch_activity_excludes_draft_releases(httpx2_mock: respx.Router)
         httpx2_mock,
         _repo_data(releases=[_gql_release(is_draft=True, published_at=None)]),
     )
-    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    _prs, _issues, releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_RELEASE
+    )
     assert releases == []
 
 
 async def test_fetch_activity_marks_prerelease(httpx2_mock: respx.Router):
     _mock_graphql(httpx2_mock, _repo_data(releases=[_gql_release(is_prerelease=True)]))
-    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    _prs, _issues, releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_RELEASE
+    )
     assert releases[0]["prerelease"] is True
 
 
@@ -435,7 +478,9 @@ async def test_fetch_activity_excludes_releases_published_before_since(
             ]
         ),
     )
-    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    _prs, _issues, releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_RELEASE
+    )
     assert [r["tag_name"] for r in releases] == ["v2.0.0"]
 
 
@@ -465,7 +510,9 @@ async def test_fetch_activity_follows_next_page_while_still_in_window(
             _repo_data(prs=[_gql_pr(number=2, updated_at="2026-07-19T10:00:00Z")]),
         ),
     ]
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert {pr["number"] for pr in prs} == {1, 2}
     assert route.call_count == 2
 
@@ -485,7 +532,9 @@ async def test_fetch_activity_stops_paginating_once_page_falls_out_of_window(
             pr_cursor="cursor-1",
         ),
     )
-    prs, _issues, _releases = await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
     assert [pr["number"] for pr in prs] == []
     assert route.call_count == 1
 
@@ -524,7 +573,9 @@ async def test_fetch_activity_paginates_releases_by_created_at(
             ),
         ),
     ]
-    _prs, _issues, releases = await fetch_activity("hugoh", [REPO_A], SINCE_RELEASE)
+    _prs, _issues, releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_RELEASE
+    )
     assert {r["tag_name"] for r in releases} == {"v2.0.0", "v1.0.0"}
     assert route.call_count == 2
 
@@ -987,8 +1038,237 @@ def test_render_html_escapes_issue_title():
 
 
 # ---------------------------------------------------------------------------
+# stargazers (fetch_activity)
+# ---------------------------------------------------------------------------
+
+# Widest star window here is 30 days -> cutoff 2026-06-24.
+STAR_SINCE = datetime(2026, 6, 24, tzinfo=UTC)
+
+
+async def test_fetch_activity_normalizes_star_total_and_recent(
+    httpx2_mock: respx.Router,
+):
+    _mock_graphql(
+        httpx2_mock,
+        _repo_data(
+            stargazer_count=42,
+            stargazers=["2026-07-20T10:00:00Z", "2026-07-01T10:00:00Z"],
+        ),
+    )
+    _prs, _issues, _releases, stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN, star_since=STAR_SINCE
+    )
+    assert stars == [
+        {
+            "repo": "repo-a",
+            "total": 42,
+            "starred_at": [
+                datetime(2026, 7, 20, 10, tzinfo=UTC),
+                datetime(2026, 7, 1, 10, tzinfo=UTC),
+            ],
+        }
+    ]
+
+
+async def test_fetch_activity_excludes_stars_before_star_since(
+    httpx2_mock: respx.Router,
+):
+    _mock_graphql(
+        httpx2_mock,
+        _repo_data(
+            stargazer_count=5,
+            stargazers=["2026-07-20T10:00:00Z", "2026-05-01T10:00:00Z"],
+        ),
+    )
+    _prs, _issues, _releases, stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN, star_since=STAR_SINCE
+    )
+    assert stars[0]["starred_at"] == [datetime(2026, 7, 20, 10, tzinfo=UTC)]
+
+
+async def test_fetch_activity_follows_star_page_while_in_window(
+    httpx2_mock: respx.Router,
+):
+    route = httpx2_mock.post(f"{API_BASE}/graphql")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "data": {
+                    "r0": _repo_data(
+                        stargazer_count=9,
+                        stargazers=["2026-07-10T00:00:00Z"],
+                        star_has_next=True,
+                        star_cursor="cursor-1",
+                    )
+                }
+            },
+        ),
+        _connection_page_response(
+            "stargazers",
+            _repo_data(stargazers=["2026-07-02T00:00:00Z"]),
+        ),
+    ]
+    _prs, _issues, _releases, stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN, star_since=STAR_SINCE
+    )
+    assert len(stars[0]["starred_at"]) == 2
+    assert route.call_count == 2
+
+
+async def test_fetch_activity_stops_paginating_stars_out_of_window(
+    httpx2_mock: respx.Router,
+):
+    route = _mock_graphql(
+        httpx2_mock,
+        _repo_data(
+            stargazer_count=9,
+            stargazers=["2026-05-01T00:00:00Z"],
+            star_has_next=True,
+            star_cursor="cursor-1",
+        ),
+    )
+    _prs, _issues, _releases, stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN, star_since=STAR_SINCE
+    )
+    assert stars[0]["starred_at"] == []
+    assert route.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# stargazers (render_html)
+# ---------------------------------------------------------------------------
+
+
+def _star_record(repo="repo-a", total=0, starred_at=()):
+    return {"repo": repo, "total": total, "starred_at": list(starred_at)}
+
+
+def _render_stars(stars, **kw):
+    return render_html(
+        [],
+        [],
+        [],
+        SINCE_OPEN,
+        SINCE_CLOSED,
+        SINCE_RELEASE,
+        UNTIL,
+        stars=stars,
+        star_days=kw.get("star_days", [7, 30]),
+        star_top=kw.get("star_top", 10),
+        owner=kw.get("owner", "hugoh"),
+    )
+
+
+def test_render_html_stars_section_shows_per_window_gains():
+    stars = [
+        _star_record(
+            "repo-a",
+            total=100,
+            starred_at=[
+                datetime(2026, 7, 22, tzinfo=UTC),  # within 7d
+                datetime(2026, 7, 5, tzinfo=UTC),  # within 30d only
+            ],
+        )
+    ]
+    html = _render_stars(stars)
+    section = html[html.index("Stars (") :]
+    assert "+ last 7d" in section
+    assert "+ last 30d" in section
+    assert "100" in section
+    row = section[section.index("repo-a") :]
+    assert "+1" in row  # 7d
+    assert "+2" in row  # 30d
+
+
+def test_render_html_star_repo_without_recent_gain_shown_only_via_top_n():
+    stars = [
+        _star_record("popular", total=500),
+        _star_record("obscure", total=1),
+    ]
+    top1 = _render_stars(stars, star_top=1)
+    assert "popular" in top1
+    assert "obscure" not in top1[top1.index("Stars (") :]
+
+
+def test_render_html_star_repo_with_recent_gain_always_shown():
+    stars = [
+        _star_record("popular", total=500),
+        _star_record("mover", total=2, starred_at=[datetime(2026, 7, 22, tzinfo=UTC)]),
+    ]
+    html = _render_stars(stars, star_top=1)
+    assert "mover" in html
+
+
+def test_render_html_stars_sorted_by_widest_gain_then_total():
+    stars = [
+        _star_record("a", total=10, starred_at=[datetime(2026, 7, 5, tzinfo=UTC)]),
+        _star_record(
+            "b",
+            total=1,
+            starred_at=[
+                datetime(2026, 7, 5, tzinfo=UTC),
+                datetime(2026, 7, 6, tzinfo=UTC),
+            ],
+        ),
+    ]
+    html = _render_stars(stars)
+    assert html.index(">b<") < html.index(">a<")
+
+
+def test_render_html_star_repo_with_no_stars_and_no_gain_is_omitted():
+    stars = [
+        _star_record("zero", total=0),
+        _star_record("real", total=7),
+    ]
+    html = _render_stars(stars)
+    section = html[html.index("Stars (") :]
+    assert "real" in section
+    assert "zero" not in section
+    assert "Stars (1)" in html
+
+
+def test_render_html_stars_empty_state():
+    html = _render_stars([])
+    assert "no repos with stars" in html.lower()
+
+
+def test_render_html_stars_count_in_header():
+    stars = [_star_record("a", total=5), _star_record("b", total=3)]
+    html = _render_stars(stars)
+    assert "Stars (2)" in html
+
+
+def test_render_html_stars_links_to_stargazers_and_escapes_repo():
+    stars = [_star_record("<repo>", total=5)]
+    html = _render_stars(stars)
+    assert "/hugoh/&lt;repo&gt;/stargazers" in html
+
+
+def test_render_html_meta_line_shows_star_windows():
+    html = _render_stars([])
+    assert "7 / 30 days" in html
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def test_parser_star_days_parses_comma_list():
+    args = build_parser().parse_args(["--star-days", "30,7"])
+    assert args.star_days == [7, 30]
+
+
+def test_parser_star_top_parses_int():
+    args = build_parser().parse_args(["--star-top", "5"])
+    assert args.star_top == 5
+
+
+def test_parser_star_defaults():
+    args = build_parser().parse_args([])
+    assert args.star_days == [7, 30]
+    assert args.star_top == 10
 
 
 def test_parser_accepts_repo_scope():
