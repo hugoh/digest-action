@@ -21,16 +21,16 @@ wheels = [
 
 [[package]]
 name = "asyncgh"
-version = "0.2.0"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pynacl" },
     { name = "stamina" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a9/0b/369bc3f1b218ed9bd85259e27dc9db4da13ad6da799848d96bfd4b68d280/asyncgh-0.2.0.tar.gz", hash = "sha256:81c8ab2d9845b84c55f183be1bf839f36d218dc61c9916ec50d00bd2cb0eaa91", size = 13160, upload-time = "2026-09-04T19:53:46.322Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/03/64f098a6311f398c77879bd1ccb7dace25ce788a4b24147aaa8dea2677ff/asyncgh-0.3.2.tar.gz", hash = "sha256:879f1a4dc18dbcf5febd3c70ed081c39916ca7bd0d2fed6e169a4624dd2bac92", size = 13834, upload-time = "2026-09-04T23:40:08.671Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/27/9a1c8c7f34f2f7347201f11c3abec89d6cf218edf7f3b51d6dbb7d3978af/asyncgh-0.2.0-py3-none-any.whl", hash = "sha256:1721cba46665c46fe50ef7aee6bfc6736f2041b76443e2e4f674dfdc9867a543", size = 11037, upload-time = "2026-09-04T19:53:45.059Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/50/44bda565b62c9bcaa2e26210bdd4bbdbbd049c903ccca32b0a99bb8dae57/asyncgh-0.3.2-py3-none-any.whl", hash = "sha256:b9a190835dbb73aca10f6bb601ba45fa90607c8a27daa6dbf1122e584f8752b7", size = 11271, upload-time = "2026-09-04T23:40:07.432Z" },
 ]
 
 [[package]]
@@ -262,15 +262,15 @@ wheels = [
 
 [[package]]
 name = "hugoh-repokit"
-version = "0.1.0"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asyncgh" },
     { name = "reconcilekit" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/aa/35297d7bfef15b7da4e91e95bc62994e401adedbb0f097a6b2e44274edf9/hugoh_repokit-0.1.0.tar.gz", hash = "sha256:df1510d6d64ae639ed621927ac9b84028bcef703d5fd3d3a8cba908eafb8aadf", size = 6569, upload-time = "2026-09-04T20:36:09.041Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/3c/e2c647cb26dc716ae96f1168925d0fedddac697637c9a55b23daa6ca7c7c/hugoh_repokit-0.1.2.tar.gz", hash = "sha256:d5993202b9ee771ffdd2321dc9bd2b58c4194fc9438d1f2f4af8e8a44fcd15a2", size = 6589, upload-time = "2026-09-04T23:40:02.768Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/8f/33fdf027d77a198a424c5bd443db7141db9bcab9417268b3dcc4e4174918/hugoh_repokit-0.1.0-py3-none-any.whl", hash = "sha256:fd3ffa2b9cb24a48655d3a2a5358c9be5191411265da42a54ee16353e0e14dfc", size = 6408, upload-time = "2026-09-04T20:36:07.959Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/db/ff31b954c371bf757b2182a87928834d47fbeae0110f5b71dfd532a586dd/hugoh_repokit-0.1.2-py3-none-any.whl", hash = "sha256:abe079874104b7e0325eba0f5ed3089d2579551d68edc89538f0f22a55a4a775", size = 6415, upload-time = "2026-09-04T23:40:01.304Z" },
 ]
 
 [[package]]
@@ -512,14 +512,14 @@ wheels = [
 
 [[package]]
 name = "reconcilekit"
-version = "0.2.0"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/95/83/3ffcbd9598d2978b378643678765cd177ad00a9f0b25482ea46129a474a5/reconcilekit-0.2.0.tar.gz", hash = "sha256:3563f650f0ba5c5252e70702109a6b05e47c4e6a6324188f7b7f81bdd57876db", size = 8953, upload-time = "2026-09-04T19:53:47.036Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/62/4590d625defbe5644058cb242d989b129522566f2e831c91bebd6c8f093a/reconcilekit-0.3.1.tar.gz", hash = "sha256:f29cc95a7c8919ab1836d6050c3f7a6cc6cf1b33409501d21ebcc841ee8a2857", size = 9057, upload-time = "2026-09-04T23:40:01.694Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/30/96fbc7a1eb96cd6ad71217ba1a39628dd93f79342753ab4b08e132cc65a2/reconcilekit-0.2.0-py3-none-any.whl", hash = "sha256:b8f06678d387d658a5173ed2c4bb24a683dd4f4e182e932d6d949fdc46f2043d", size = 8788, upload-time = "2026-09-04T19:53:45.755Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/d1/8d37f811629125efa4c68de2d824753eba7876a252d4c98716744bce0785/reconcilekit-0.3.1-py3-none-any.whl", hash = "sha256:5219856c200efcfe87db3ef6051e155eb86fc376635a49e4393efb2ba7dd23e0", size = 8833, upload-time = "2026-09-04T23:40:00.476Z" },
 ]
 
 [[package]]
