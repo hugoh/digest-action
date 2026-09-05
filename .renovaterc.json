@@ -9,7 +9,7 @@
     },
     {
       "matchManagers": ["pep621"],
-      "matchFileNames": ["pyproject.toml"],
+      "matchFileNames": ["pyproject.toml", "uv.lock"],
       "semanticCommitType": "fix"
     }
   ]
