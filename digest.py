@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from asyncgh import graphql
+from asyncgh import GhError, graphql
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from repokit import DEFAULT_JOBS, Repo, as_set, list_repos, run_cli
 from rich.progress import Progress
@@ -190,33 +190,50 @@ _CONNECTION_ITEMS_KEY = {
     "stargazers": "edges",
 }
 
-_REPO_QUERY_FIELDS = "      stargazerCount\n" + "\n".join(
-    f"""      {name}(first: 100, {args}) {{
+
+def _repo_query_fields(*, include_stars: bool) -> str:
+    connections = [
+        (name, args)
+        for name, args in _CONNECTION_QUERY_ARGS.items()
+        if include_stars or name != "stargazers"
+    ]
+    blocks = "\n".join(
+        f"""      {name}(first: 100, {args}) {{
         pageInfo {{ hasNextPage endCursor }}
         {_CONNECTION_ITEMS_KEY[name]} {{ {_CONNECTION_FIELDS[name]} }}
       }}"""
-    for name, args in _CONNECTION_QUERY_ARGS.items()
-)
+        for name, args in connections
+    )
+    return f"      stargazerCount\n{blocks}"
+
+
+def _empty_stargazers() -> dict:
+    return {"pageInfo": {"hasNextPage": False, "endCursor": None}, "edges": []}
 
 
 @functools.lru_cache
-def _build_digest_query(n: int) -> str:
+def _build_digest_query(n: int, *, include_stars: bool = True) -> str:
     """One query, aliasing up to n repos (r0, r1, ...) so a batch fetches
     PRs/issues/releases for every repo it covers in a single round-trip.
     Cached since every full batch reuses the same n (and the trailing
     partial batch reuses its own n across runs within the process).
     """
     name_vars = ", ".join(f"$name{i}: String!" for i in range(n))
+    fields = _repo_query_fields(include_stars=include_stars)
     repos = "\n".join(
-        f"r{i}: repository(owner: $owner, name: $name{i}) {{{_REPO_QUERY_FIELDS}}}"
+        f"r{i}: repository(owner: $owner, name: $name{i}) {{{fields}}}"
         for i in range(n)
     )
     return f"query Digest($owner: String!, {name_vars}) {{\n{repos}\n}}"
 
 
-async def _fetch_batch(owner: str, names: list[str]) -> dict:
+async def _fetch_batch(
+    owner: str, names: list[str], *, include_stars: bool = True
+) -> dict:
     variables = {"owner": owner, **{f"name{i}": name for i, name in enumerate(names)}}
-    return await graphql(_build_digest_query(len(names)), variables)
+    return await graphql(
+        _build_digest_query(len(names), include_stars=include_stars), variables
+    )
 
 
 @functools.lru_cache
@@ -328,6 +345,10 @@ async def fetch_activity(
     up to _BATCH_SIZE repos per query (bounded by `jobs` concurrent batches)
     -- CI status and mergeable state come back inline on each PR node, so
     unlike the old REST fetch there's no separate per-open-PR round-trip.
+
+    If a batch comes back FORBIDDEN (a fine-grained PAT can't read the
+    stargazers connection), it retries that batch without stargazers and
+    every returned star record is `total` only, `starred_at` empty.
     """
     sem = asyncio.Semaphore(jobs)
     # Stars have a much shorter window than open PRs/issues; paginating them
@@ -336,10 +357,35 @@ async def fetch_activity(
     connection_since = dict.fromkeys(_CONNECTION_QUERY_ARGS, since_fetch)
     connection_since["stargazers"] = star_since
     batches = [repos[i : i + _BATCH_SIZE] for i in range(0, len(repos), _BATCH_SIZE)]
+    stars_available = True
 
     async def run_batch(batch: list[Repo], progress: Progress, task) -> dict:
+        nonlocal stars_available
+        names = [repo.name for repo in batch]
+        with_stars = stars_available
         async with sem:
-            result = await _fetch_batch(owner, [repo.name for repo in batch])
+            try:
+                result = await _fetch_batch(owner, names, include_stars=with_stars)
+            except GhError as exc:
+                # A fine-grained PAT can't read the stargazers connection; the
+                # star section is optional, so retry without it. If that also
+                # fails the FORBIDDEN was something else -- re-raise the first.
+                if not (with_stars and exc.error_type == "FORBIDDEN"):
+                    raise
+                try:
+                    result = await _fetch_batch(owner, names, include_stars=False)
+                except GhError:
+                    raise exc from None
+                if stars_available:
+                    stars_available = False
+                    print(
+                        "warning: token cannot read stargazers -- "
+                        "omitting the star activity section",
+                        file=sys.stderr,
+                    )
+        if not stars_available:
+            for repo_data in result.values():
+                repo_data.setdefault("stargazers", _empty_stargazers())
         progress.advance(task)
         return result
 

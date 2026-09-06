@@ -16,7 +16,7 @@ Self-contained: installs its own pinned `uv` ([`astral-sh/setup-uv`](https://git
 | Input | Required | Default | Purpose |
 |---|---|---|---|
 | `owner` | yes | — | GitHub account/org to report on |
-| `github-token` | yes | — | Token `gh` (and so `gh auth token`) should use — needs read access to every targeted repo, and to list repos for `owner` account-wide, which `GITHUB_TOKEN` cannot do outside its own repo. Passed through as `GH_TOKEN`. |
+| `github-token` | yes | — | A PAT, passed through as `GH_TOKEN`. `GITHUB_TOKEN` can't do account-wide repo listing, so it won't work. See [Token](#token) for the scopes. |
 | `only` | no | *(all)* | Comma-separated repo names to limit to |
 | `skip` | no | *(none)* | Comma-separated repo names to exclude |
 | `open-days` | no | `365` | How far back to look for still-open PRs/issues |
@@ -35,7 +35,22 @@ SMTP settings are passed as **inputs**, not job-level `env:` — `ghalint`'s
 exposure to every step in the job, since composite-action steps don't see
 env set on the calling step, only on the job.
 
-## Outputs
+## Token
+
+`github-token` needs to read PRs, issues, releases and stargazers across
+every repo owned by `owner`, and to enumerate that account's repos —
+`GITHUB_TOKEN` can't, so a PAT is required.
+
+**Classic PAT** — scope `repo` (or `public_repo` if `owner` has no private
+repos you want included). This is the simplest choice and supports every
+part of the digest.
+
+**Fine-grained PAT** — Resource owner `owner`, Repository access **All
+repositories**, read-only on **Metadata**, **Contents**, **Issues**, and
+**Pull requests**. Note: fine-grained PATs **cannot read the `stargazers`
+connection**, so the star-activity section is dropped automatically (a
+warning is logged) and `star-days` / `star-top` have no effect. Use a
+classic PAT if you want the star section.
 
 | Output | Set when | Value |
 |---|---|---|
