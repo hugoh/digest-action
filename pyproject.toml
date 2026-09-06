@@ -10,10 +10,30 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-httpx2>=0.1", "respx>=0.21"]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=7",
+  "pytest-httpx2>=0.1",
+  "respx>=0.21",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+]
 
 [tool.pytest.ini_options]
-addopts = ["-p", "pytest_httpx2"]
+addopts = ["-p", "pytest_httpx2", "--cov", "--cov-report=term-missing"]
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
