@@ -32,8 +32,9 @@ from pathlib import Path
 from asyncgh import graphql
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from repokit import DEFAULT_JOBS, Repo, as_set, list_repos, run_cli
-from repokit.email import send_email_from_env
 from rich.progress import Progress
+
+from mailer import send_email_from_env
 
 _BATCH_SIZE = 10
 _RENOVATE_LOGINS = {"renovate", "renovate[bot]"}
