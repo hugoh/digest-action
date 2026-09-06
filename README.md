@@ -76,9 +76,6 @@ steps:
       path: digest.html
 ```
 
-See [`digest.yml`](https://github.com/hugoh/gh-workflows/blob/main/.github/workflows/digest.yml)
-in `hugoh/gh-workflows` for a real-world example of this action in use.
-
 ## History
 
 Originally lived at `digest-action/` inside
