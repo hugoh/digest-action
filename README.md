@@ -26,7 +26,7 @@ Self-contained: installs its own pinned `uv` ([`astral-sh/setup-uv`](https://git
 | `star-top` | no | `10` | Always show this many most-starred repos, even with no recent gain |
 | `out` | no | *(none)* | Also write the rendered HTML to this path (relative to the runner's workspace) — sets the `html` output. Required if `send-email` is `false`, since otherwise the digest is built and immediately discarded. |
 | `send-email` | no | `true` | Whether to email the digest — requires the `smtp-*`/`digest-*-email` inputs below |
-| `smtp-host` / `smtp-port` / `smtp-username` / `smtp-password` | when `send-email` | — | SMTP relay settings |
+| `smtp-host` / `smtp-port` / `smtp-username` / `smtp-password` | when `send-email` | — | SMTP relay settings. Connects over STARTTLS with cert + hostname verification — use a submission port (typically `587`), not an implicit-TLS port (`465`). |
 | `digest-from-email` / `digest-to-email` | when `send-email` | — | Envelope From / recipient |
 | `uv-version` | no | *(none)* | `uv` version to install (e.g. `0.5.0`, `latest`, `latest-known`) — defaults to the version in `pyproject.toml`, or `latest` |
 
@@ -75,9 +75,6 @@ steps:
       name: digest
       path: digest.html
 ```
-
-See [`digest.yml`](https://github.com/hugoh/gh-workflows/blob/main/.github/workflows/digest.yml)
-in `hugoh/gh-workflows` for a real-world example of this action in use.
 
 ## History
 
