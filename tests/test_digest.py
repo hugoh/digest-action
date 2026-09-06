@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 import respx
-from asyncgh import API_BASE
+from asyncgh import API_BASE, GhError
 from repokit import Repo
 
 from digest import _main_async, build_parser, fetch_activity, render_html
@@ -1133,6 +1133,61 @@ async def test_fetch_activity_stops_paginating_stars_out_of_window(
     )
     assert stars[0]["starred_at"] == []
     assert route.call_count == 1
+
+
+async def test_fetch_activity_omits_stars_when_stargazers_forbidden(
+    httpx2_mock: respx.Router, capsys
+):
+    without_stars = _repo_data(stargazer_count=7, prs=[_gql_pr(number=3)])
+    without_stars.pop("stargazers")
+    route = httpx2_mock.post(f"{API_BASE}/graphql")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "data": {"r0": None},
+                "errors": [
+                    {
+                        "type": "FORBIDDEN",
+                        "message": "Resource not accessible by personal access token",
+                        "path": ["r0", "stargazers"],
+                    }
+                ],
+            },
+        ),
+        httpx.Response(200, json={"data": {"r0": without_stars}}),
+    ]
+
+    prs, _issues, _releases, stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN, star_since=STAR_SINCE
+    )
+
+    assert [pr["number"] for pr in prs] == [3]
+    assert stars == [{"repo": "repo-a", "total": 7, "starred_at": []}]
+    assert route.call_count == 2
+    assert "stargazers" in capsys.readouterr().err
+
+
+async def test_fetch_activity_reraises_forbidden_on_a_non_star_field(
+    httpx2_mock: respx.Router,
+):
+    httpx2_mock.post(f"{API_BASE}/graphql").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {"r0": None},
+                "errors": [
+                    {
+                        "type": "FORBIDDEN",
+                        "message": "Resource not accessible by personal access token",
+                        "path": ["r0", "pullRequests"],
+                    }
+                ],
+            },
+        )
+    )
+    with pytest.raises(GhError, match="Resource not accessible"):
+        await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
 
 
 # ---------------------------------------------------------------------------
