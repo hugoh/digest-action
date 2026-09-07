@@ -1,15 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>hugoh/renovate-config"],
+  "extends": [
+    "github>hugoh/renovate-config",
+    "github>hugoh/renovate-config//presets/action-file"
+  ],
   "packageRules": [
     {
-      "matchManagers": ["github-actions"],
-      "matchFileNames": ["action.yml"],
-      "semanticCommitType": "fix"
-    },
-    {
+      "description": "Runtime deps are bundled into the published action, so a bump must cut a release.",
       "matchManagers": ["pep621"],
-      "matchFileNames": ["pyproject.toml", "uv.lock"],
       "semanticCommitType": "fix"
     }
   ]
