@@ -11,9 +11,26 @@ rumdl = "0.2.65"
 biome = "2.5.10"
 tombi = "1.5.1"
 "github:owenlamont/ryl" = "0.21.0"
+"github:tj-actions/auto-doc" = "3.6.0"
 ruff = "0.16.6"
 ty = "0.0.78"
 
 [tasks.test]
 description = "Run the test suite"
 run = "uv run pytest"
+
+[tasks.gen]
+description = "Regenerate the README Inputs/Outputs tables from action.yml"
+run = [
+  "auto-doc --filename action.yml --output README.md --inputColumns Input --inputColumns Required --inputColumns Default --inputColumns Description --outputColumns Output --outputColumns Description --colMaxWords 100",
+  "rumdl check --fix README.md",
+]
+
+[tasks.gen-check]
+description = "Verify the README API tables are in sync with action.yml"
+run = """
+before=$(shasum -a 256 README.md | cut -d' ' -f1)
+mise run gen
+after=$(shasum -a 256 README.md | cut -d' ' -f1)
+[ "$before" = "$after" ] || { echo 'README.md is out of date — run: mise run gen'; exit 1; }
+"""

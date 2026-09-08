@@ -27,22 +27,22 @@ inputs:
     required: false
     default: "7"
   star-days:
-    description: >
+    description: >-
       Comma-separated windows (in days) for counting recently-gained stars
       -- one column per value in the Stars section.
     required: false
     default: "7,30"
   star-top:
-    description: >
+    description: >-
       Always show this many most-starred repos in the Stars section, even
       with no recent gain.
     required: false
     default: "10"
   out:
-    description: >
+    description: >-
       Path (relative to the runner's workspace) to also write the rendered
-      HTML to. Required if send-email is false, since otherwise the digest
-      would be built and immediately discarded.
+      HTML to. Sets the html output. Required if send-email is false, since
+      otherwise the digest would be built and immediately discarded.
     required: false
     default: ""
   send-email:
@@ -54,7 +54,10 @@ inputs:
     required: false
     default: ""
   smtp-port:
-    description: SMTP relay port. Required when send-email is true.
+    description: >-
+      SMTP relay port. Required when send-email is true. The relay is reached
+      over STARTTLS with cert and hostname verification, so use a submission
+      port (typically 587), not an implicit-TLS port (465).
     required: false
     default: ""
   smtp-username:
@@ -78,13 +81,14 @@ inputs:
     required: false
     default: ${{ github.repository_owner }}
   github-token:
-    description: >
+    description: >-
       Token gh (and so `gh auth token`) should use -- needs read access to
       every targeted repo, and to list repos for `owner` account-wide, which
       GITHUB_TOKEN cannot do outside its own repo. Passed through as GH_TOKEN.
+      A PAT is required; see the Token section of the README for the scopes.
     required: true
   uv-version:
-    description: >
+    description: >-
       uv version to install (e.g. 0.5.0, latest, latest-known). Defaults to
       the version in pyproject.toml, or latest.
     required: false
