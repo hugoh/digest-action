@@ -10,6 +10,11 @@ local linters = new Mapping<String, Step> {
     ["uv-sync"] = {
         check = "uv sync"
     }
+    ["readme-gen"] = {
+        glob = List("action.yml", "README.md", "mise.toml")
+        check = "mise run gen-check"
+        fix = "mise run gen"
+    }
     ["pytest"] = {
         check = "uv run pytest"
         profiles = List("ci")

@@ -13,22 +13,33 @@ Self-contained: installs its own pinned `uv` ([`astral-sh/setup-uv`](https://git
 
 ## Inputs
 
-| Input | Required | Default | Purpose |
-|---|---|---|---|
-| `owner` | yes | — | GitHub account/org to report on |
-| `github-token` | yes | — | A PAT, passed through as `GH_TOKEN`. `GITHUB_TOKEN` can't do account-wide repo listing, so it won't work. See [Token](#token) for the scopes. |
-| `only` | no | *(all)* | Comma-separated repo names to limit to |
-| `skip` | no | *(none)* | Comma-separated repo names to exclude |
-| `open-days` | no | `365` | How far back to look for still-open PRs/issues |
-| `closed-days` | no | `7` | How far back to look for closed PRs/issues |
-| `release-days` | no | `7` | How far back to look for published releases |
-| `star-days` | no | `7,30` | Comma-separated windows (days) for counting recently-gained stars — one column per value |
-| `star-top` | no | `10` | Always show this many most-starred repos, even with no recent gain |
-| `out` | no | *(none)* | Also write the rendered HTML to this path (relative to the runner's workspace) — sets the `html` output. Required if `send-email` is `false`, since otherwise the digest is built and immediately discarded. |
-| `send-email` | no | `true` | Whether to email the digest — requires the `smtp-*`/`digest-*-email` inputs below |
-| `smtp-host` / `smtp-port` / `smtp-username` / `smtp-password` | when `send-email` | — | SMTP relay settings. Connects over STARTTLS with cert + hostname verification — use a submission port (typically `587`), not an implicit-TLS port (`465`). |
-| `digest-from-email` / `digest-to-email` | when `send-email` | — | Envelope From / recipient |
-| `uv-version` | no | *(none)* | `uv` version to install (e.g. `0.5.0`, `latest`, `latest-known`) — defaults to the version in `pyproject.toml`, or `latest` |
+<!-- AUTO-DOC-INPUT:START - Do not remove or modify this section -->
+
+|       INPUT       | REQUIRED |              DEFAULT               |                                                                                                                                         DESCRIPTION                                                                                                                                         |
+|-------------------|----------|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|    closed-days    |  false   |               `"7"`                |                                                                                                                    How many days back to look for closed PRs and issues                                                                                                                     |
+| digest-from-email |  false   |                                    |                                                                                                                  Envelope From address. Required when send-email is true.                                                                                                                   |
+|  digest-to-email  |  false   |                                    |                                                                                                                    Recipient address. Required when send-email is true.                                                                                                                     |
+|   github-token    |   true   |                                    | Token gh (and so `gh auth token`) should use -- needs read access to every targeted repo, and to list repos for `owner` account-wide, which GITHUB_TOKEN cannot do outside its own repo. Passed through as GH_TOKEN. A PAT is required; see the Token section of the README for the scopes. |
+|       only        |  false   |                                    |                                                                                                         Comma-separated repo names to limit to (default -- every non-archived repo)                                                                                                         |
+|     open-days     |  false   |              `"365"`               |                                                                                                                  How many days back to look for still-open PRs and issues                                                                                                                   |
+|        out        |  false   |                                    |                                          Path (relative to the runner's workspace) to also write the rendered HTML to. Sets the html output. Required if send-email is false, since otherwise the digest would be built and immediately discarded.                                          |
+|       owner       |  false   | `"${{ github.repository_owner }}"` |                                                                                                            GitHub account/org to report on (default -- whoever runs the action)                                                                                                             |
+|   release-days    |  false   |               `"7"`                |                                                                                                                      How many days back to look for published releases                                                                                                                      |
+|    send-email     |  false   |              `"true"`              |                                                                                                         Whether to email the digest -- requires the smtp-* / digest-*-email inputs                                                                                                          |
+|       skip        |  false   |                                    |                                                                                                                            Comma-separated repo names to exclude                                                                                                                            |
+|     smtp-host     |  false   |                                    |                                                                                                                     SMTP relay host. Required when send-email is true.                                                                                                                      |
+|   smtp-password   |  false   |                                    |                                                                                                            SMTP password -- pass as a secret. Required when send-email is true.                                                                                                             |
+|     smtp-port     |  false   |                                    |                                            SMTP relay port. Required when send-email is true. The relay is reached over STARTTLS with cert and hostname verification, so use a submission port (typically 587), not an implicit-TLS port (465).                                             |
+|   smtp-username   |  false   |                                    |                                                                                                                      SMTP username. Required when send-email is true.                                                                                                                       |
+|     star-days     |  false   |              `"7,30"`              |                                                                                     Comma-separated windows (in days) for counting recently-gained stars -- one column per value in the Stars section.                                                                                      |
+|     star-top      |  false   |               `"10"`               |                                                                                                  Always show this many most-starred repos in the Stars section, even with no recent gain.                                                                                                   |
+|    uv-version     |  false   |                                    |                                                                                       uv version to install (e.g. 0.5.0, latest, latest-known). Defaults to the version in pyproject.toml, or latest.                                                                                       |
+
+<!-- AUTO-DOC-INPUT:END -->
+
+The `smtp-*` and `digest-*-email` inputs are required when `send-email` is
+`true` (the default).
 
 SMTP settings are passed as **inputs**, not job-level `env:` — `ghalint`'s
 `job_secrets` policy flags job-level env holding secrets as over-broad
@@ -52,9 +63,15 @@ connection**, so the star-activity section is dropped automatically (a
 warning is logged) and `star-days` / `star-top` have no effect. Use a
 classic PAT if you want the star section.
 
-| Output | Set when | Value |
-|---|---|---|
-| `html` | `out` is given | the `out` path |
+## Outputs
+
+<!-- AUTO-DOC-OUTPUT:START - Do not remove or modify this section -->
+
+| OUTPUT |                          DESCRIPTION                          |
+|--------|---------------------------------------------------------------|
+|  html  | Path to the rendered HTML file (set only when `out` is given) |
+
+<!-- AUTO-DOC-OUTPUT:END -->
 
 ## Usage
 
