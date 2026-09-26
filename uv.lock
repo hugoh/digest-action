@@ -21,16 +21,16 @@ wheels = [
 
 [[package]]
 name = "asyncgh"
-version = "0.3.2"
+version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pynacl" },
     { name = "stamina" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/03/64f098a6311f398c77879bd1ccb7dace25ce788a4b24147aaa8dea2677ff/asyncgh-0.3.2.tar.gz", hash = "sha256:879f1a4dc18dbcf5febd3c70ed081c39916ca7bd0d2fed6e169a4624dd2bac92", size = 13834, upload-time = "2026-09-04T23:40:08.671Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/a9/6b6c976ad0e41bb1a29509edb4da6c55ad18e75e2be1285451b7c4f8ac25/asyncgh-0.5.2.tar.gz", hash = "sha256:e4eddf56febcb9f9d4d825c950413915c2aca486e8dfb986c9bdd6592608f6f4", size = 15852, upload-time = "2026-09-26T14:53:59.568Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/50/44bda565b62c9bcaa2e26210bdd4bbdbbd049c903ccca32b0a99bb8dae57/asyncgh-0.3.2-py3-none-any.whl", hash = "sha256:b9a190835dbb73aca10f6bb601ba45fa90607c8a27daa6dbf1122e584f8752b7", size = 11271, upload-time = "2026-09-04T23:40:07.432Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/8b/047fd9269f1490abf5f4105617e26cb27fd8ed8e7bff3900489fb87b1550/asyncgh-0.5.2-py3-none-any.whl", hash = "sha256:218a70c59e88d4efefe68ec6779f38b488163006bb046957a70af98c0053748c", size = 12445, upload-time = "2026-09-26T14:53:58.54Z" },
 ]
 
 [[package]]
