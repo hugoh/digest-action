@@ -1,6 +1,6 @@
-amends "package://github.com/jdx/hk/releases/download/v2.2.0/hk@2.2.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v2.2.0/hk@2.2.0#/Builtins.pkl"
-import "package://github.com/hugoh/hk-config/releases/download/v2.0.0/hk-config@2.0.0#/base.pkl" as Base
+amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Builtins.pkl"
+import "package://github.com/hugoh/hk-config/releases/download/v2.0.2/hk-config@2.0.2#/base.pkl" as Base
 
 min_hk_version = Base.min_hk_version
 
