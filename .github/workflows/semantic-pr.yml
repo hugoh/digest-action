@@ -9,6 +9,6 @@ permissions: {}
 
 jobs:
   semantic-pr:
-    uses: hugoh/gh-workflows/.github/workflows/semantic-pr.yml@4929757554cf77214a2768428a611ef6457a34ed # v1.36.0
+    uses: hugoh/gh-workflows/.github/workflows/semantic-pr.yml@fc872ebc6ac6bb28fa73a2e83f9f354faad9b5b7 # v1.40.6
     permissions:
       pull-requests: read
