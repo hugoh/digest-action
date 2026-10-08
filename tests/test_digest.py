@@ -1,3 +1,5 @@
+import io
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -5,8 +7,12 @@ import pytest
 import respx
 from asyncgh import API_BASE, GhError
 from repokit import Repo
+from rich.console import Console
+from stamina.instrumentation import RetryDetails
 
+import digest
 from digest import (
+    _log_retry,
     _main_async,
     build_parser,
     fetch_activity,
@@ -138,6 +144,8 @@ def _gql_release(
 def _repo_data(
     prs=(),
     issues=(),
+    closed_prs=(),
+    closed_issues=(),
     releases=(),
     stargazers=(),
     stargazer_count=0,
@@ -159,6 +167,14 @@ def _repo_data(
         "issues": {
             "pageInfo": {"hasNextPage": issue_has_next, "endCursor": issue_cursor},
             "nodes": list(issues),
+        },
+        "closedPullRequests": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": list(closed_prs),
+        },
+        "closedIssues": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": list(closed_issues),
         },
         "releases": {
             "pageInfo": {"hasNextPage": release_has_next, "endCursor": release_cursor},
@@ -1478,3 +1494,181 @@ def test_render_html_omits_security_section_when_unavailable():
 def test_render_html_escapes_security_alert_summary():
     html = _render_alerts([_normalized_alert(summary="<script>x</script>")])
     assert "<script>x</script>" not in html
+
+
+async def test_fetch_activity_logs_batch_progress_without_tty(
+    httpx2_mock: respx.Router, capsys
+):
+    _mock_graphql(httpx2_mock, _repo_data())
+
+    await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+
+    assert "Fetched activity batch 1/1" in capsys.readouterr().err
+
+
+async def test_fetch_security_alerts_logs_batch_progress_without_tty(
+    httpx2_mock: respx.Router, capsys
+):
+    _mock_alerts(httpx2_mock, [])
+
+    await fetch_security_alerts("hugoh", [REPO_A])
+
+    assert "Fetched Dependabot alerts batch 1/1" in capsys.readouterr().err
+
+
+def test_log_retry_reports_cause_and_wait(capsys):
+    details = RetryDetails(
+        name="graphql",
+        args=(),
+        kwargs={},
+        retry_num=2,
+        wait_for=3.5,
+        waited_so_far=4.0,
+        caused_by=GhError("502 Bad Gateway"),
+    )
+
+    _log_retry(details)
+
+    err = capsys.readouterr().err
+    assert "Retry 2" in err
+    assert "3.5s" in err
+    assert "502 Bad Gateway" in err
+
+
+async def test_fetch_activity_applies_each_window_to_its_own_connection(
+    httpx2_mock: respx.Router,
+):
+    _mock_graphql(
+        httpx2_mock,
+        _repo_data(
+            prs=[_gql_pr(number=1, updated_at="2026-07-11T10:00:00Z")],
+            closed_prs=[
+                _gql_pr(number=2, state="MERGED", updated_at="2026-07-12T10:00:00Z"),
+                _gql_pr(number=3, state="MERGED", updated_at="2026-07-18T10:00:00Z"),
+            ],
+            issues=[_gql_issue(number=4, updated_at="2026-07-11T10:00:00Z")],
+            closed_issues=[
+                _gql_issue(number=5, state="CLOSED", updated_at="2026-07-12T10:00:00Z"),
+                _gql_issue(number=6, state="CLOSED", updated_at="2026-07-18T10:00:00Z"),
+            ],
+            releases=[
+                _gql_release(tag_name="v1", published_at="2026-07-12T10:00:00Z"),
+                _gql_release(tag_name="v2", published_at="2026-07-18T10:00:00Z"),
+            ],
+        ),
+    )
+
+    prs, issues, releases, _stars = await fetch_activity(
+        "hugoh",
+        [REPO_A],
+        SINCE_OPEN,
+        since_closed=SINCE_CLOSED,
+        since_release=SINCE_RELEASE,
+    )
+
+    assert {pr["number"] for pr in prs} == {1, 3}
+    assert {issue["number"] for issue in issues} == {4, 6}
+    assert [r["tag_name"] for r in releases] == ["v2"]
+
+
+async def test_fetch_activity_queries_open_and_closed_items_separately(
+    httpx2_mock: respx.Router,
+):
+    route = _mock_graphql(httpx2_mock, _repo_data())
+
+    await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+
+    query = json.loads(route.calls[0].request.content)["query"]
+    assert "pullRequests: pullRequests(" in query
+    assert "states: [OPEN]" in query
+    assert "closedPullRequests: pullRequests(" in query
+    assert "closedIssues: issues(" in query
+    assert "states: [CLOSED, MERGED]" in query
+
+
+async def test_fetch_activity_does_not_log_pagination_when_page_is_out_of_window(
+    httpx2_mock: respx.Router, capsys
+):
+    _mock_graphql(
+        httpx2_mock,
+        _repo_data(
+            prs=[_gql_pr(number=1, updated_at="2026-07-01T10:00:00Z")],
+            pr_has_next=True,
+            pr_cursor="cursor-1",
+        ),
+    )
+
+    await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+
+    assert "Paginating" not in capsys.readouterr().err
+
+
+async def test_fetch_activity_omits_ci_and_mergeable_fields_for_closed_prs(
+    httpx2_mock: respx.Router,
+):
+    closed_node = _gql_pr(number=2, state="MERGED")
+    del closed_node["mergeable"]
+    del closed_node["commits"]
+    route = _mock_graphql(httpx2_mock, _repo_data(closed_prs=[closed_node]))
+
+    prs, _issues, _releases, _stars = await fetch_activity(
+        "hugoh", [REPO_A], SINCE_OPEN
+    )
+
+    query = json.loads(route.calls[0].request.content)["query"]
+    open_block, closed_block = query.split("closedPullRequests:")
+    assert "mergeable" in open_block
+    assert "mergeable" not in closed_block.split("issues:")[0]
+    assert [pr["number"] for pr in prs] == [2]
+    assert "ci_status" not in prs[0]
+
+
+@pytest.fixture
+def tty_console(monkeypatch):
+    buffer = io.StringIO()
+    monkeypatch.setattr(
+        digest, "_console", Console(file=buffer, force_terminal=True, width=100)
+    )
+    return buffer
+
+
+async def test_fetch_activity_shows_bar_not_batch_lines_on_tty(
+    httpx2_mock: respx.Router, tty_console
+):
+    _mock_graphql(httpx2_mock, _repo_data())
+
+    await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+
+    output = tty_console.getvalue()
+    assert "Fetching activity" in output
+    assert "batch 1/1" not in output
+
+
+async def test_fetch_security_alerts_shows_bar_not_batch_lines_on_tty(
+    httpx2_mock: respx.Router, tty_console
+):
+    _mock_alerts(httpx2_mock, [])
+
+    await fetch_security_alerts("hugoh", [REPO_A])
+
+    output = tty_console.getvalue()
+    assert "Fetching Dependabot alerts" in output
+    assert "batch 1/1" not in output
+
+
+def test_log_does_not_wrap_long_lines_on_non_tty(capsys):
+    long_message = "Retry 1 in 1.0s after: " + "x" * 300
+
+    digest._log(long_message)
+
+    assert capsys.readouterr().err == long_message + "\n"
+
+
+async def test_fetch_activity_hides_pagination_bar_when_nothing_to_paginate(
+    httpx2_mock: respx.Router, tty_console
+):
+    _mock_graphql(httpx2_mock, _repo_data())
+
+    await fetch_activity("hugoh", [REPO_A], SINCE_OPEN)
+
+    assert "Paginating" not in tty_console.getvalue()

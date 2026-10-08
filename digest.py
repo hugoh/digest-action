@@ -32,7 +32,9 @@ from pathlib import Path
 from asyncgh import GhError, graphql
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from repokit import DEFAULT_JOBS, Repo, as_set, list_repos, run_cli
+from rich.console import Console
 from rich.progress import Progress
+from stamina.instrumentation import RetryDetails, set_on_retry_hooks
 
 from mailer import send_email_from_env
 
@@ -48,6 +50,31 @@ _CI_STATUS_BY_ROLLUP_STATE = {
     "FAILURE": "failing",
     "ERROR": "failing",
 }
+
+
+# Everything user-facing goes through this stderr console, so rich draws
+# messages above any live progress bar. On a non-TTY (CI) bars are disabled
+# and _log_step prints plain lines instead.
+_console = Console(stderr=True)
+
+
+def _log(message: str) -> None:
+    _console.print(message, markup=False, highlight=False, soft_wrap=True)
+
+
+def _log_step(message: str) -> None:
+    """A progress line only for runs without a bar to show it."""
+    if not _console.is_terminal:
+        _log(message)
+
+
+def _progress() -> Progress:
+    return Progress(console=_console, disable=not _console.is_terminal)
+
+
+def _log_retry(details: RetryDetails) -> None:
+    cause = str(details.caused_by).splitlines()[0]
+    _log(f"Retry {details.retry_num} in {details.wait_for:.1f}s after: {cause}")
 
 
 def _parse_dt(value: str) -> datetime:
@@ -83,8 +110,11 @@ def _mergeable(node: dict) -> str:
 
 
 def _normalize_pr(repo_name: str, node: dict) -> dict:
+    """`ci_status` / `mergeable` are only present for open PRs -- the closed
+    connection doesn't fetch them (see _CLOSED_PR_FIELDS).
+    """
     state, merged = _PR_STATE[node["state"]]
-    return {
+    pr = {
         "repo": repo_name,
         "number": node["number"],
         "title": node["title"],
@@ -94,9 +124,11 @@ def _normalize_pr(repo_name: str, node: dict) -> dict:
         "closed_at": _parse_optional_dt(node["closedAt"]),
         "merged": merged,
         "state": state,
-        "ci_status": _ci_status(node),
-        "mergeable": _mergeable(node),
     }
+    if "commits" in node:
+        pr["ci_status"] = _ci_status(node)
+        pr["mergeable"] = _mergeable(node)
+    return pr
 
 
 def _is_renovate_dashboard(node: dict) -> bool:
@@ -155,6 +187,11 @@ _PR_FIELDS = """number title url state createdAt closedAt updatedAt
           author { login }
           mergeable
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"""
+# Closed PRs are shown without the CI / conflict columns, and those fields
+# are the expensive part of the query.
+_CLOSED_PR_FIELDS = (
+    "number title url state createdAt closedAt updatedAt author { login }"
+)
 _ISSUE_FIELDS = "number title url state createdAt closedAt updatedAt author { login }"
 _RELEASE_FIELDS = "tagName name url publishedAt createdAt isPrerelease isDraft"
 _STARGAZER_FIELDS = "starredAt"
@@ -163,30 +200,51 @@ _STARGAZER_FIELDS = "starredAt"
 # query) and its continuation pages (fetched one repo/connection at a time,
 # below) -- `first: 100, after: $after` is added by whichever query builder
 # is using them.
+#
+# Open and closed items are separate (aliased) connections because they need
+# different look-back windows: open items back to --open-days, closed ones
+# only back to --closed-days.
 _CONNECTION_QUERY_ARGS = {
-    "pullRequests": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, CLOSED, MERGED]",
-    "issues": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, CLOSED]",
+    "pullRequests": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN]",
+    "closedPullRequests": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [CLOSED, MERGED]",
+    "issues": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN]",
+    "closedIssues": "orderBy: {field: UPDATED_AT, direction: DESC}, states: [CLOSED]",
     # GitHub has no PUBLISHED_AT order option for releases, so CREATED_AT is
     # the only field pagination can treat as monotonic across pages.
     "releases": "orderBy: {field: CREATED_AT, direction: DESC}",
     "stargazers": "orderBy: {field: STARRED_AT, direction: DESC}",
 }
+# The GraphQL field behind each connection alias.
+_CONNECTION_FIELD_NAME = {
+    "pullRequests": "pullRequests",
+    "closedPullRequests": "pullRequests",
+    "issues": "issues",
+    "closedIssues": "issues",
+    "releases": "releases",
+    "stargazers": "stargazers",
+}
 _CONNECTION_FIELDS = {
     "pullRequests": _PR_FIELDS,
+    "closedPullRequests": _CLOSED_PR_FIELDS,
     "issues": _ISSUE_FIELDS,
+    "closedIssues": _ISSUE_FIELDS,
     "releases": _RELEASE_FIELDS,
     "stargazers": _STARGAZER_FIELDS,
 }
 _CONNECTION_CUTOFF_FIELD = {
     "pullRequests": "updatedAt",
+    "closedPullRequests": "updatedAt",
     "issues": "updatedAt",
+    "closedIssues": "updatedAt",
     "releases": "createdAt",
     "stargazers": "starredAt",
 }
 # stargazers exposes `starredAt` on the edge, not the node.
 _CONNECTION_ITEMS_KEY = {
     "pullRequests": "nodes",
+    "closedPullRequests": "nodes",
     "issues": "nodes",
+    "closedIssues": "nodes",
     "releases": "nodes",
     "stargazers": "edges",
 }
@@ -199,7 +257,7 @@ def _repo_query_fields(*, include_stars: bool) -> str:
         if include_stars or name != "stargazers"
     ]
     blocks = "\n".join(
-        f"""      {name}(first: 100, {args}) {{
+        f"""      {name}: {_CONNECTION_FIELD_NAME[name]}(first: 100, {args}) {{
         pageInfo {{ hasNextPage endCursor }}
         {_CONNECTION_ITEMS_KEY[name]} {{ {_CONNECTION_FIELDS[name]} }}
       }}"""
@@ -250,7 +308,8 @@ def _build_connection_page_query(connection: str) -> str:
     return (
         "query DigestPage($owner: String!, $name: String!, $after: String!) {\n"
         "  repository(owner: $owner, name: $name) {\n"
-        f"    {connection}(first: 100, after: $after, {args}) {{\n"
+        f"    {connection}: {_CONNECTION_FIELD_NAME[connection]}"
+        f"(first: 100, after: $after, {args}) {{\n"
         "      pageInfo { hasNextPage endCursor }\n"
         f"      {items_key} {{ {fields} }}\n"
         "    }\n"
@@ -269,6 +328,15 @@ async def _fetch_connection_page(
     return data["repository"][connection]
 
 
+def _has_more_in_window(data: dict, connection: str, since: datetime) -> bool:
+    items = data[_CONNECTION_ITEMS_KEY[connection]]
+    return bool(
+        data["pageInfo"]["hasNextPage"]
+        and items
+        and _parse_dt(items[-1][_CONNECTION_CUTOFF_FIELD[connection]]) >= since
+    )
+
+
 async def _paginate_connection(
     owner: str,
     repo_name: str,
@@ -283,22 +351,17 @@ async def _paginate_connection(
     falls before since_fetch every later page is older still -- pagination
     can stop even if hasNextPage remains true.
     """
-    cutoff_field = _CONNECTION_CUTOFF_FIELD[connection]
     items_key = _CONNECTION_ITEMS_KEY[connection]
-    items = data[items_key]
-    page_info = data["pageInfo"]
-    while (
-        page_info["hasNextPage"]
-        and items
-        and _parse_dt(items[-1][cutoff_field]) >= since_fetch
-    ):
+    while _has_more_in_window(data, connection, since_fetch):
         async with sem:
             page = await _fetch_connection_page(
-                owner, repo_name, connection, page_info["endCursor"]
+                owner, repo_name, connection, data["pageInfo"]["endCursor"]
             )
-        items = items + page[items_key]
-        page_info = page["pageInfo"]
-    return {"pageInfo": page_info, items_key: items}
+        data = {
+            "pageInfo": page["pageInfo"],
+            items_key: data[items_key] + page[items_key],
+        }
+    return data
 
 
 def _extract_prs(repo_name: str, connection: dict, since_fetch: datetime) -> list[dict]:
@@ -338,13 +401,17 @@ def _extract_releases(
 async def fetch_activity(
     owner: str,
     repos: list[Repo],
-    since_fetch: datetime,
+    since_open: datetime,
     jobs: int = DEFAULT_JOBS,
     star_since: datetime | None = None,
+    since_closed: datetime | None = None,
+    since_release: datetime | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Fetches PRs, issues, releases, and stargazers for every repo via GraphQL, batching
     up to _BATCH_SIZE repos per query (bounded by `jobs` concurrent batches)
-    -- CI status and mergeable state come back inline on each PR node, so
+    -- each connection is only fetched back to the window the report needs
+    (`since_closed` / `since_release` default to `since_open`).
+    CI status and mergeable state come back inline on each PR node, so
     unlike the old REST fetch there's no separate per-open-PR round-trip.
 
     If a batch comes back FORBIDDEN (a fine-grained PAT can't read the
@@ -352,13 +419,22 @@ async def fetch_activity(
     every returned star record is `total` only, `starred_at` empty.
     """
     sem = asyncio.Semaphore(jobs)
+    since_closed = since_closed or since_open
+    since_release = since_release or since_open
     # Stars have a much shorter window than open PRs/issues; paginating them
-    # against since_fetch would page a popular repo's whole star history.
-    star_since = star_since or since_fetch
-    connection_since = dict.fromkeys(_CONNECTION_QUERY_ARGS, since_fetch)
-    connection_since["stargazers"] = star_since
+    # against since_open would page a popular repo's whole star history.
+    star_since = star_since or since_open
+    connection_since = {
+        "pullRequests": since_open,
+        "issues": since_open,
+        "closedPullRequests": since_closed,
+        "closedIssues": since_closed,
+        "releases": since_release,
+        "stargazers": star_since,
+    }
     batches = [repos[i : i + _BATCH_SIZE] for i in range(0, len(repos), _BATCH_SIZE)]
     stars_available = True
+    done_batches: list[None] = []
 
     async def run_batch(batch: list[Repo], progress: Progress, task) -> dict:
         nonlocal stars_available
@@ -379,20 +455,21 @@ async def fetch_activity(
                     raise exc from None
                 if stars_available:
                     stars_available = False
-                    print(
+                    _log(
                         "warning: token cannot read stargazers -- "
-                        "omitting the star activity section",
-                        file=sys.stderr,
+                        "omitting the star activity section"
                     )
         if not stars_available:
             for repo_data in result.values():
                 repo_data.setdefault("stargazers", _empty_stargazers())
         progress.advance(task)
+        done_batches.append(None)
+        _log_step(f"Fetched activity batch {len(done_batches)}/{len(batches)}")
         return result
 
     def _needs_pagination(repo_data: dict) -> bool:
         return any(
-            repo_data[name]["pageInfo"]["hasNextPage"]
+            _has_more_in_window(repo_data[name], name, connection_since[name])
             for name in _CONNECTION_QUERY_ARGS
         )
 
@@ -403,6 +480,7 @@ async def fetch_activity(
         needs_pagination = _needs_pagination(repo_data)
         if needs_pagination:
             progress.update(task, description=f"Paginating {repo.name}...")
+            _log_step(f"Paginating {repo.name}...")
         pages = await asyncio.gather(
             *(
                 _paginate_connection(
@@ -415,7 +493,7 @@ async def fetch_activity(
             progress.advance(task)
         return dict(zip(names, pages, strict=True))
 
-    with Progress(disable=not sys.stdout.isatty()) as progress:
+    with _progress() as progress:
         fetch_task = progress.add_task("Fetching activity...", total=len(batches))
         results = await asyncio.gather(
             *(run_batch(batch, progress, fetch_task) for batch in batches)
@@ -432,8 +510,12 @@ async def fetch_activity(
         paginate_total = sum(
             1 for _, repo_data in repos_and_data if _needs_pagination(repo_data)
         )
-        paginate_task = progress.add_task(
-            "Paginating repos with >100 items...", total=paginate_total
+        paginate_task = (
+            progress.add_task(
+                "Paginating repos with >100 items...", total=paginate_total
+            )
+            if paginate_total
+            else None
         )
         paginated = await asyncio.gather(
             *(
@@ -444,10 +526,16 @@ async def fetch_activity(
 
     prs, issues, releases, stars = [], [], [], []
     for (repo, repo_data), connections in zip(repos_and_data, paginated, strict=True):
-        prs.extend(_extract_prs(repo.name, connections["pullRequests"], since_fetch))
-        issues.extend(_extract_issues(repo.name, connections["issues"], since_fetch))
+        for name in ("pullRequests", "closedPullRequests"):
+            prs.extend(
+                _extract_prs(repo.name, connections[name], connection_since[name])
+            )
+        for name in ("issues", "closedIssues"):
+            issues.extend(
+                _extract_issues(repo.name, connections[name], connection_since[name])
+            )
         releases.extend(
-            _extract_releases(repo.name, connections["releases"], since_fetch)
+            _extract_releases(repo.name, connections["releases"], since_release)
         )
         stars.append(
             _extract_stars(
@@ -497,8 +585,9 @@ async def fetch_security_alerts(
     """
     sem = asyncio.Semaphore(jobs)
     batches = [repos[i : i + _BATCH_SIZE] for i in range(0, len(repos), _BATCH_SIZE)]
+    done_batches: list[None] = []
 
-    async def run_batch(batch: list[Repo]) -> list[dict]:
+    async def run_batch(batch: list[Repo], progress: Progress, task) -> list[dict]:
         names = [repo.name for repo in batch]
         variables = {
             "owner": owner,
@@ -506,6 +595,9 @@ async def fetch_security_alerts(
         }
         async with sem:
             data = await graphql(_build_alerts_query(len(names)), variables)
+        done_batches.append(None)
+        _log_step(f"Fetched Dependabot alerts batch {len(done_batches)}/{len(batches)}")
+        progress.advance(task)
         # ponytail: first 100 open alerts per repo, no pagination.
         return [
             _normalize_alert(owner, repo.name, node)
@@ -514,14 +606,19 @@ async def fetch_security_alerts(
         ]
 
     try:
-        results = await asyncio.gather(*(run_batch(batch) for batch in batches))
+        with _progress() as progress:
+            task = progress.add_task(
+                "Fetching Dependabot alerts...", total=len(batches)
+            )
+            results = await asyncio.gather(
+                *(run_batch(batch, progress, task) for batch in batches)
+            )
     except GhError as exc:
         if exc.error_type != "FORBIDDEN":
             raise
-        print(
+        _log(
             "warning: token cannot read Dependabot alerts -- "
-            "omitting the security alerts section",
-            file=sys.stderr,
+            "omitting the security alerts section"
         )
         return None
     return [alert for batch_alerts in results for alert in batch_alerts]
@@ -734,25 +831,32 @@ def build_parser() -> argparse.ArgumentParser:
 async def _main_async(args: argparse.Namespace) -> int:
     owner = os.environ.get("GH_OWNER")
     if not owner:
-        print("error: GH_OWNER must be set", file=sys.stderr)
+        _log("error: GH_OWNER must be set")
         return 1
 
     until = datetime.now(UTC)
     since_open = until - timedelta(days=args.open_days)
     since_closed = until - timedelta(days=args.closed_days)
     since_release = until - timedelta(days=args.release_days)
-    since_fetch = min(since_open, since_closed, since_release)
-    star_since = min(
-        (until - timedelta(days=d) for d in args.star_days), default=since_fetch
-    )
+    star_since = min((until - timedelta(days=d) for d in args.star_days), default=None)
 
     repos = await list_repos(
         owner, only=set(args.repos) or None, skip=as_set(args.skip)
     )
+    _log(f"Found {len(repos)} repos for {owner}")
     prs, issues, releases, stars = await fetch_activity(
-        owner, repos, since_fetch, star_since=star_since
+        owner,
+        repos,
+        since_open,
+        star_since=star_since,
+        since_closed=since_closed,
+        since_release=since_release,
     )
     alerts = await fetch_security_alerts(owner, repos)
+    _log(
+        f"Fetched {len(prs)} PRs, {len(issues)} issues, {len(releases)} releases, "
+        f"{len(alerts or [])} alerts; rendering"
+    )
     rendered = render_html(
         prs,
         releases,
@@ -773,11 +877,13 @@ async def _main_async(args: argparse.Namespace) -> int:
 
     if not args.no_send:
         send_email_from_env(rendered, subject=f"GitHub digest: {_format_date(until)}")
+        _log("Digest emailed")
     return 0
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    set_on_retry_hooks([_log_retry])
     return run_cli(_main_async, args)
 
 
