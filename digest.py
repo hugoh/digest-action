@@ -2,7 +2,7 @@
 and issues opened in the last N days, releases published in the last R days,
 PRs and issues closed in the last M days, and a stars section (per-repo
 totals plus stars gained in each --star-days window) -- in separate
-sections, and emails it via an SMTP relay. Renovate's "Dependency Dashboard"
+sections, plus every open Dependabot alert, and emails it via an SMTP relay. Renovate's "Dependency Dashboard"
 issues are filtered out as noise.
 
 Usage: digest.py [repo ...] [--skip name1,name2] [--open-days 365]
@@ -37,6 +37,7 @@ from rich.progress import Progress
 from mailer import send_email_from_env
 
 _BATCH_SIZE = 10
+_SEVERITY_ORDER = ["critical", "high", "moderate", "low"]
 _RENOVATE_LOGINS = {"renovate", "renovate[bot]"}
 _RENOVATE_DASHBOARD_TITLE = "Dependency Dashboard"
 _CI_STATUS_BY_ROLLUP_STATE = {
@@ -459,6 +460,73 @@ async def fetch_activity(
     return prs, issues, releases, stars
 
 
+_ALERT_FIELDS = """number createdAt
+        securityVulnerability { severity package { name } advisory { summary } }"""
+
+
+def _normalize_alert(owner: str, repo_name: str, node: dict) -> dict:
+    vuln = node["securityVulnerability"]
+    return {
+        "repo": repo_name,
+        "number": node["number"],
+        "url": f"https://github.com/{owner}/{repo_name}/security/dependabot/{node['number']}",
+        "severity": vuln["severity"].lower(),
+        "package": vuln["package"]["name"],
+        "summary": vuln["advisory"]["summary"],
+        "created_at": _parse_dt(node["createdAt"]),
+    }
+
+
+@functools.lru_cache
+def _build_alerts_query(n: int) -> str:
+    name_vars = ", ".join(f"$name{i}: String!" for i in range(n))
+    repos = "\n".join(
+        f"r{i}: repository(owner: $owner, name: $name{i}) {{"
+        f" vulnerabilityAlerts(first: 100, states: [OPEN]) {{ nodes {{ {_ALERT_FIELDS} }} }} }}"
+        for i in range(n)
+    )
+    return f"query Alerts($owner: String!, {name_vars}) {{\n{repos}\n}}"
+
+
+async def fetch_security_alerts(
+    owner: str, repos: list[Repo], jobs: int = DEFAULT_JOBS
+) -> list[dict] | None:
+    """Open Dependabot alerts for every repo, or None if the token can't read
+    them (the section is then omitted, like stars). Fetched separately from
+    fetch_activity so a token without alert access can't fail that query.
+    """
+    sem = asyncio.Semaphore(jobs)
+    batches = [repos[i : i + _BATCH_SIZE] for i in range(0, len(repos), _BATCH_SIZE)]
+
+    async def run_batch(batch: list[Repo]) -> list[dict]:
+        names = [repo.name for repo in batch]
+        variables = {
+            "owner": owner,
+            **{f"name{i}": name for i, name in enumerate(names)},
+        }
+        async with sem:
+            data = await graphql(_build_alerts_query(len(names)), variables)
+        # ponytail: first 100 open alerts per repo, no pagination.
+        return [
+            _normalize_alert(owner, repo.name, node)
+            for i, repo in enumerate(batch)
+            for node in data[f"r{i}"]["vulnerabilityAlerts"]["nodes"]
+        ]
+
+    try:
+        results = await asyncio.gather(*(run_batch(batch) for batch in batches))
+    except GhError as exc:
+        if exc.error_type != "FORBIDDEN":
+            raise
+        print(
+            "warning: token cannot read Dependabot alerts -- "
+            "omitting the security alerts section",
+            file=sys.stderr,
+        )
+        return None
+    return [alert for batch_alerts in results for alert in batch_alerts]
+
+
 # ---------------------------------------------------------------------------
 # render_html
 # ---------------------------------------------------------------------------
@@ -535,6 +603,7 @@ def render_html(
     star_days: list[int] | None = None,
     star_top: int = 10,
     owner: str = "",
+    alerts: list[dict] | None = None,
 ) -> str:
     star_days = sorted(star_days or [])
     star_cutoffs = [until - timedelta(days=d) for d in star_days]
@@ -580,7 +649,19 @@ def render_html(
         key=lambda issue: issue["closed_at"],
         reverse=True,
     )
+    sorted_alerts = (
+        None
+        if alerts is None
+        else sorted(
+            alerts,
+            key=lambda a: (
+                _SEVERITY_ORDER.index(a["severity"]),
+                -a["created_at"].timestamp(),
+            ),
+        )
+    )
     return _digest_template.render(
+        alerts=sorted_alerts,
         open_prs=open_prs,
         releases=recent_releases,
         closed_prs=closed_prs,
@@ -671,6 +752,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     prs, issues, releases, stars = await fetch_activity(
         owner, repos, since_fetch, star_since=star_since
     )
+    alerts = await fetch_security_alerts(owner, repos)
     rendered = render_html(
         prs,
         releases,
@@ -683,6 +765,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         star_days=args.star_days,
         star_top=args.star_top,
         owner=owner,
+        alerts=alerts,
     )
 
     if args.out:

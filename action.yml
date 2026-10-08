@@ -109,6 +109,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         GH_OWNER: ${{ inputs.owner }}
+        GH_MAX_RETRIES: "8"
         ONLY: ${{ inputs.only }}
         SKIP: ${{ inputs.skip }}
         OPEN_DAYS: ${{ inputs.open-days }}
