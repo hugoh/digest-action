@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
@@ -21,16 +21,16 @@ wheels = [
 
 [[package]]
 name = "asyncgh"
-version = "0.5.2"
+version = "0.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pynacl" },
     { name = "stamina" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/be/a9/6b6c976ad0e41bb1a29509edb4da6c55ad18e75e2be1285451b7c4f8ac25/asyncgh-0.5.2.tar.gz", hash = "sha256:e4eddf56febcb9f9d4d825c950413915c2aca486e8dfb986c9bdd6592608f6f4", size = 15852, upload-time = "2026-09-26T14:53:59.568Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/88/0d8c2323954280775a97aafe088c6bbdcb99747107dbcec934afe74246cc/asyncgh-0.5.3.tar.gz", hash = "sha256:f1c3135d1cab73acdae5a07083607722e83d1e0998ee37e9eec029250969de43", size = 16216, upload-time = "2026-10-08T22:21:48.053Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/8b/047fd9269f1490abf5f4105617e26cb27fd8ed8e7bff3900489fb87b1550/asyncgh-0.5.2-py3-none-any.whl", hash = "sha256:218a70c59e88d4efefe68ec6779f38b488163006bb046957a70af98c0053748c", size = 12445, upload-time = "2026-09-26T14:53:58.54Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/8b/2b56ffc7085b6a02c8a42c005d31eb2052e5f0d919f9480e858aabe5d42b/asyncgh-0.5.3-py3-none-any.whl", hash = "sha256:9e801716f89210a2c7688d47d06243c2c24d0ee21152dbfa7be50a33bf687873", size = 12615, upload-time = "2026-10-08T22:21:46.858Z" },
 ]
 
 [[package]]
@@ -277,6 +277,7 @@ dependencies = [
     { name = "hugoh-repokit" },
     { name = "jinja2" },
     { name = "rich" },
+    { name = "stamina" },
 ]
 
 [package.dev-dependencies]
@@ -290,10 +291,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asyncgh", specifier = ">=0.2.0" },
+    { name = "asyncgh", specifier = ">=0.5.3" },
     { name = "hugoh-repokit", specifier = ">=0.1.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "rich", specifier = ">=13" },
+    { name = "stamina", specifier = ">=26.1.0" },
 ]
 
 [package.metadata.requires-dev]
