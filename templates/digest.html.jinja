@@ -15,6 +15,9 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; font
 .status-no-checks { color: #666; }
 .release-stable { color: #1a7f37; font-weight: 600; }
 .release-prerelease { color: #9a6700; font-weight: 600; }
+.severity-critical, .severity-high { color: #cf222e; font-weight: 600; }
+.severity-moderate { color: #9a6700; font-weight: 600; }
+.severity-low { color: #666; }
 .star-gain { color: #1a7f37; font-weight: 600; }
 .star-flat { color: #666; }
 </style>
@@ -125,8 +128,32 @@ Releases: published in the last {{ (until - since_release).days }} days (since {
 </table>
 {% endif %}
 {% endmacro %}
+{% macro alerts_section(alerts) %}
+<h2>Security alerts ({{ alerts|length }})</h2>
+{% if not alerts %}
+<p class="empty">No open security alerts.</p>
+{% else %}
+<table>
+<tr>
+  <th>Alert</th><th>Repo</th><th>Package</th><th>Severity</th><th>Opened</th>
+</tr>
+{% for alert in alerts %}
+<tr>
+  <td><a href="{{ alert.url }}">{{ alert.summary }}</a></td>
+  <td>{{ alert.repo }}</td>
+  <td>{{ alert.package }}</td>
+  <td class="severity-{{ alert.severity }}">{{ alert.severity }}</td>
+  <td>{{ alert.created_at.strftime("%Y-%m-%d") }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
 {{ section("Open", since_open, until, open_prs, false, true) }}
 {{ issues_section("Open issues", since_open, until, open_issues, false) }}
+{% if alerts is not none %}
+{{ alerts_section(alerts) }}
+{% endif %}
 {{ releases_section(since_release, until, releases) }}
 {{ stars_section(star_rows, star_days, owner) }}
 {{ section("Closed", since_closed, until, closed_prs, true, false) }}

@@ -48,9 +48,9 @@ env set on the calling step, only on the job.
 
 ## Token
 
-`github-token` needs to read PRs, issues, releases and stargazers across
-every repo owned by `owner`, and to enumerate that account's repos —
-`GITHUB_TOKEN` can't, so a PAT is required.
+`github-token` needs to read PRs, issues, releases, stargazers and
+Dependabot alerts across every repo owned by `owner`, and to enumerate that
+account's repos — `GITHUB_TOKEN` can't, so a PAT is required.
 
 **Classic PAT** — scope `repo` (or `public_repo` if `owner` has no private
 repos you want included). This is the simplest choice and supports every
@@ -62,6 +62,10 @@ repositories**, read-only on **Metadata**, **Contents**, **Issues**, and
 connection**, so the star-activity section is dropped automatically (a
 warning is logged) and `star-days` / `star-top` have no effect. Use a
 classic PAT if you want the star section.
+
+Dependabot alerts need `security_events` on a classic PAT, or read-only
+**Dependabot alerts** on a fine-grained one. Without it the Security alerts
+section is dropped automatically (a warning is logged).
 
 ## Outputs
 

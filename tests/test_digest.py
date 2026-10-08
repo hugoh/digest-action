@@ -6,7 +6,13 @@ import respx
 from asyncgh import API_BASE, GhError
 from repokit import Repo
 
-from digest import _main_async, build_parser, fetch_activity, render_html
+from digest import (
+    _main_async,
+    build_parser,
+    fetch_activity,
+    fetch_security_alerts,
+    render_html,
+)
 
 # open PRs cover the last 14 days, closed PRs the last 7 -- both windows
 # meet at UNTIL (2026-07-24).
@@ -1336,3 +1342,139 @@ def test_parser_repo_scope_defaults_to_everything():
     args = build_parser().parse_args([])
     assert args.repos == []
     assert args.skip is None
+
+
+# ---------------------------------------------------------------------------
+# Dependabot alerts
+# ---------------------------------------------------------------------------
+
+
+def _gql_alert(number=1, severity="HIGH", package="left-pad", summary="Bad thing"):
+    return {
+        "number": number,
+        "createdAt": "2026-07-20T00:00:00Z",
+        "securityVulnerability": {
+            "severity": severity,
+            "package": {"name": package},
+            "advisory": {"summary": summary},
+        },
+    }
+
+
+def _mock_alerts(httpx2_mock: respx.Router, *alerts_per_repo: list[dict]):
+    return httpx2_mock.post(f"{API_BASE}/graphql").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    f"r{i}": {"vulnerabilityAlerts": {"nodes": alerts}}
+                    for i, alerts in enumerate(alerts_per_repo)
+                }
+            },
+        )
+    )
+
+
+async def test_fetch_security_alerts_normalizes_fields(httpx2_mock: respx.Router):
+    _mock_alerts(httpx2_mock, [_gql_alert(number=4, severity="CRITICAL")], [])
+
+    alerts = await fetch_security_alerts("hugoh", [REPO_A, REPO_B])
+
+    assert alerts == [
+        {
+            "repo": "repo-a",
+            "number": 4,
+            "url": "https://github.com/hugoh/repo-a/security/dependabot/4",
+            "severity": "critical",
+            "package": "left-pad",
+            "summary": "Bad thing",
+            "created_at": datetime(2026, 7, 20, tzinfo=UTC),
+        }
+    ]
+
+
+async def test_fetch_security_alerts_none_when_forbidden(
+    httpx2_mock: respx.Router, capsys
+):
+    httpx2_mock.post(f"{API_BASE}/graphql").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {"r0": None},
+                "errors": [
+                    {
+                        "type": "FORBIDDEN",
+                        "message": "Resource not accessible by personal access token",
+                        "path": ["r0", "vulnerabilityAlerts"],
+                    }
+                ],
+            },
+        )
+    )
+
+    assert await fetch_security_alerts("hugoh", [REPO_A]) is None
+    assert "Dependabot" in capsys.readouterr().err
+
+
+async def test_fetch_security_alerts_reraises_other_errors(httpx2_mock: respx.Router):
+    httpx2_mock.post(f"{API_BASE}/graphql").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": None, "errors": [{"type": "NOT_FOUND", "message": "boom"}]},
+        )
+    )
+    with pytest.raises(GhError, match="boom"):
+        await fetch_security_alerts("hugoh", [REPO_A])
+
+
+def _normalized_alert(**overrides):
+    base = {
+        "repo": "repo-a",
+        "number": 1,
+        "url": "https://github.com/hugoh/repo-a/security/dependabot/1",
+        "severity": "high",
+        "package": "left-pad",
+        "summary": "Bad thing",
+        "created_at": datetime(2026, 7, 20, tzinfo=UTC),
+    }
+    base.update(overrides)
+    return base
+
+
+def _render_alerts(alerts):
+    return render_html(
+        [], [], [], SINCE_OPEN, SINCE_CLOSED, SINCE_RELEASE, UNTIL, alerts=alerts
+    )
+
+
+def test_render_html_lists_security_alert():
+    html = _render_alerts([_normalized_alert()])
+    assert "Security alerts (1)" in html
+    assert "left-pad" in html
+    assert "Bad thing" in html
+    assert "/security/dependabot/1" in html
+    assert "severity-high" in html
+
+
+def test_render_html_security_alerts_sorted_by_severity_then_newest():
+    html = _render_alerts(
+        [
+            _normalized_alert(number=1, severity="low", package="pkg-low"),
+            _normalized_alert(number=2, severity="critical", package="pkg-crit"),
+            _normalized_alert(number=3, severity="high", package="pkg-high"),
+        ]
+    )
+    assert html.index("pkg-crit") < html.index("pkg-high") < html.index("pkg-low")
+
+
+def test_render_html_security_alerts_empty_state():
+    assert "No open security alerts" in _render_alerts([])
+
+
+def test_render_html_omits_security_section_when_unavailable():
+    assert "Security alerts" not in _render_alerts(None)
+
+
+def test_render_html_escapes_security_alert_summary():
+    html = _render_alerts([_normalized_alert(summary="<script>x</script>")])
+    assert "<script>x</script>" not in html
