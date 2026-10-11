@@ -1,6 +1,6 @@
 [tools]
 hk = "2.4.0"
-uv = "0.12.22"
+uv = "0.12.23"
 actionlint = "1.7.12"
 pinact = "5.0.0"
 zizmor = "1.30.1"
