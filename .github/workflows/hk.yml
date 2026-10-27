@@ -9,6 +9,10 @@ on: # yamllint disable-line rule:truthy
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-caller-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   hk:
     uses: hugoh/gh-workflows/.github/workflows/hk.yml@1395fc42fd4ca42b131cc238cea3cc6ab42af4dd # v1.40.11
