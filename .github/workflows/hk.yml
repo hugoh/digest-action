@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   hk:
-    uses: hugoh/gh-workflows/.github/workflows/hk.yml@20f042d18e1e5318722f808bafc6d7fc18a838f7 # v1.40.17
+    uses: hugoh/gh-workflows/.github/workflows/hk.yml@12a131c8eca966fe30bcc4ca670fa596b375702f # v1.40.19
     permissions:
       contents: read
       packages: read
