@@ -1,5 +1,5 @@
 [tools]
-hk = "2.10.0"
+hk = "2.11.1"
 uv = "0.13.7"
 jactionlint = "2.5.0"
 pinact = "5.0.2"
