@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   release:
-    uses: hugoh/gh-workflows/.github/workflows/release.yml@e16fb522310fbdff89aab38e3d16d13ee5cff11e # v1.40.20
+    uses: hugoh/gh-workflows/.github/workflows/release.yml@ae6e1b2ce64760b5418b71668bb9b0a74a3c4c70 # v1.40.22
     permissions:
       contents: write
     with:
