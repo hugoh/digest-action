@@ -1,0 +1,44 @@
+---
+name: ci
+
+on: # yamllint disable-line rule:truthy
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-caller-${{ github.event.pull_request.number || github.ref }}
+  # Cancel superseded PR runs; never cancel a push-to-main run mid-release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  hk:
+    uses: hugoh/gh-workflows/.github/workflows/hk.yml@ae6e1b2ce64760b5418b71668bb9b0a74a3c4c70 # v1.40.22
+    permissions:
+      contents: read
+      packages: read
+      statuses: write
+
+  # The single required status check, and all that release waits on.
+  ci-gate:
+    if: always()
+    needs: [hk]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
+
+  release:
+    needs: ci-gate
+    if: github.event_name == 'push'
+    uses: hugoh/gh-workflows/.github/workflows/release.yml@ae6e1b2ce64760b5418b71668bb9b0a74a3c4c70 # v1.40.22
+    permissions:
+      contents: write
+    with:
+      major-tag: true
