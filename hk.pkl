@@ -1,12 +1,15 @@
-amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Builtins.pkl"
-import "package://github.com/hugoh/hk-config/releases/download/v3.2.0/hk-config@3.2.0#/base.pkl" as Base
+amends "package://github.com/jdx/hk/releases/download/v2.14.0/hk@2.14.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.14.0/hk@2.14.0#/Builtins.pkl"
+import "package://github.com/hugoh/hk-config/releases/download/v3.3.0/hk-config@3.3.0#/base.pkl" as Base
 
 min_hk_version = Base.min_hk_version
 
-local linters = new Mapping<String, Step> {
+local common = new Mapping<String, Step> {
     ...Base.base
     ...Base.python
+}
+
+local linters = (common) {
     ["uv-sync"] {
         check = "uv sync"
     }
